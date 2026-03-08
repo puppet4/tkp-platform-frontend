@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { feedbackApi, type FeedbackItemData } from "@/lib/api";
-import { ThumbsUp, ThumbsDown, AlertTriangle, Edit3, Eye, X, MessageSquare, User, Bot, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ThumbsUp, ThumbsDown, AlertTriangle, Edit3, Eye, X, MessageSquare, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -29,6 +29,7 @@ const Feedback = () => {
   const [processedFilter, setProcessedFilter] = useState<boolean | undefined>(undefined);
   const [page, setPage] = useState(1);
   const [replayResult, setReplayResult] = useState<Record<string, unknown> | null>(null);
+  const [replayTracking, setReplayTracking] = useState<{ feedbackId: string; replayId: string } | null>(null);
 
   const { data: feedbacks = [], isLoading } = useQuery({
     queryKey: ["feedbacks", processedFilter],
@@ -37,15 +38,37 @@ const Feedback = () => {
 
   const replayMutation = useMutation({
     mutationFn: (feedbackId: string) => feedbackApi.replay(feedbackId),
-    onSuccess: (data) => {
+    onSuccess: (data, feedbackId) => {
+      setReplayTracking({ feedbackId, replayId: data.replay_id });
       setReplayResult(data as Record<string, unknown>);
-      toast.success("回放已生成");
+      toast.success("回放任务已触发，正在跟踪状态");
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const { data: replayDetail, isFetching: replayPolling } = useQuery({
+    queryKey: ["feedback-replay", replayTracking?.replayId],
+    queryFn: () => feedbackApi.getReplay(replayTracking!.replayId),
+    enabled: !!replayTracking?.replayId,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) => {
+      const status = String((query.state.data as Record<string, unknown> | undefined)?.status || "");
+      return ["completed", "failed", "error"].includes(status) ? false : 2000;
+    },
+  });
+
+  useEffect(() => {
+    if (!replayDetail) return;
+    setReplayResult(replayDetail as Record<string, unknown>);
+    const status = String((replayDetail as Record<string, unknown>).status || "");
+    if (status === "completed") toast.success("回放已完成");
+    if (status === "failed" || status === "error") toast.error("回放失败");
+  }, [replayDetail]);
+
   const totalPages = Math.max(1, Math.ceil(feedbacks.length / PAGE_SIZE));
   const paginated = feedbacks.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const replayStatus = String((replayDetail as Record<string, unknown> | undefined)?.status || "queued");
 
   return (
     <AppLayout>
@@ -59,7 +82,7 @@ const Feedback = () => {
             { key: "all", label: "全部", val: undefined as boolean | undefined },
             { key: "unprocessed", label: "待处理", val: false },
             { key: "processed", label: "已处理", val: true },
-          ].map(f => (
+          ].map((f) => (
             <button key={f.key} onClick={() => { setProcessedFilter(f.val); setPage(1); }}
               className={`text-[12px] px-3 py-1.5 rounded-full transition-colors ${
                 processedFilter === f.val
@@ -69,6 +92,20 @@ const Feedback = () => {
           ))}
         </div>
 
+        {replayTracking && (
+          <div className="mb-3 p-3 rounded-lg border border-border bg-card flex items-center justify-between">
+            <div className="text-sm text-foreground">
+              回放跟踪中：<span className="font-mono text-[12px]">{replayTracking.replayId}</span>
+              <span className={`ml-2 text-[11px] px-2 py-0.5 rounded-full ${
+                replayStatus === "completed" ? "bg-success/10 text-success" :
+                replayStatus === "failed" || replayStatus === "error" ? "bg-destructive/10 text-destructive" :
+                "bg-warning/10 text-warning"
+              }`}>{replayStatus}</span>
+            </div>
+            <div className="text-[11px] text-muted-foreground">{replayPolling ? "轮询中..." : "状态稳定"}</div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex items-center justify-center py-16 gap-2">
             <Loader2 className="h-5 w-5 text-primary animate-spin" />
@@ -77,20 +114,22 @@ const Feedback = () => {
         ) : (
           <>
             <div className="bg-card rounded-lg border border-border shadow-xs overflow-hidden overflow-x-auto">
-              <table className="w-full text-sm min-w-[640px]">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border bg-secondary/30">
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">类型</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">反馈内容</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">状态</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">回放</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">时间</th>
                     <th className="w-20" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {paginated.map(fb => {
+                  {paginated.map((fb) => {
                     const Icon = typeIcons[fb.feedback_type] || Edit3;
                     const label = typeLabels[fb.feedback_type] || fb.feedback_type;
+                    const isTracked = replayTracking?.feedbackId === fb.id;
                     return (
                       <tr key={fb.id} className="hover:bg-secondary/30 transition-colors">
                         <td className="px-4 py-3">
@@ -110,6 +149,17 @@ const Feedback = () => {
                           <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
                             fb.processed ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
                           }`}>{fb.processed ? "已处理" : "待处理"}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {isTracked ? (
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                              replayStatus === "completed" ? "bg-success/10 text-success" :
+                              replayStatus === "failed" || replayStatus === "error" ? "bg-destructive/10 text-destructive" :
+                              "bg-warning/10 text-warning"
+                            }`}>{replayStatus}</span>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground">-</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-muted-foreground text-[12px]">
                           {new Date(fb.created_at).toLocaleString("zh-CN")}
@@ -140,12 +190,12 @@ const Feedback = () => {
               <div className="flex items-center justify-between mt-3">
                 <span className="text-[11px] text-muted-foreground">共 {feedbacks.length} 条</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                  <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
                     className="p-1.5 rounded-md hover:bg-secondary disabled:opacity-30 transition-colors">
                     <ChevronLeft className="h-4 w-4 text-muted-foreground" />
                   </button>
                   <span className="text-sm text-foreground px-2">{page} / {totalPages}</span>
-                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                  <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
                     className="p-1.5 rounded-md hover:bg-secondary disabled:opacity-30 transition-colors">
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </button>
@@ -192,7 +242,7 @@ const Feedback = () => {
                 <div className="p-3 rounded-lg bg-secondary/50 border border-border">
                   <div className="text-[11px] text-muted-foreground mb-1">标签</div>
                   <div className="flex gap-1 flex-wrap">
-                    {selectedFb.tags.map(t => (
+                    {selectedFb.tags.map((t) => (
                       <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">{t}</span>
                     ))}
                   </div>
@@ -216,9 +266,17 @@ const Feedback = () => {
               )}
 
               {/* Replay result */}
-              {replayResult && (
+              {replayTracking?.feedbackId === selectedFb.id && (
                 <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
-                  <div className="text-[11px] text-primary font-medium mb-1">回放结果</div>
+                  <div className="text-[11px] text-primary font-medium mb-1">回放任务</div>
+                  <div className="text-[12px] text-foreground">Replay ID: {replayTracking.replayId}</div>
+                  <div className="text-[12px] text-muted-foreground mt-0.5">状态: {replayStatus}{replayPolling ? "（轮询中）" : ""}</div>
+                </div>
+              )}
+
+              {replayResult && replayTracking?.feedbackId === selectedFb.id && (
+                <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
+                  <div className="text-[11px] text-primary font-medium mb-1">回放结果详情</div>
                   <pre className="text-[11px] text-foreground overflow-auto max-h-60">{JSON.stringify(replayResult, null, 2)}</pre>
                 </div>
               )}

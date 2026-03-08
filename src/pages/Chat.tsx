@@ -22,8 +22,9 @@ import {
   Loader2,
   Menu,
   Trash2,
+  Pencil,
 } from "lucide-react";
-import { FormDialog, FormField, DialogButton } from "@/components/FormDialog";
+import { FormDialog, FormField, DialogButton, FormInput } from "@/components/FormDialog";
 import ReactMarkdown from "react-markdown";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -39,6 +40,8 @@ const Chat = () => {
   const [showNewConv, setShowNewConv] = useState(false);
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [showMobileList, setShowMobileList] = useState(false);
+  const [showRenameConv, setShowRenameConv] = useState(false);
+  const [renameTitle, setRenameTitle] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -60,6 +63,13 @@ const Chat = () => {
     queryFn: () => kbApi.list(),
   });
 
+  // Load conversation detail
+  const { data: convDetail, refetch: refetchConvDetail } = useQuery({
+    queryKey: ["conv-detail", selectedConvId],
+    queryFn: () => chatApi.getConversation(selectedConvId!),
+    enabled: !!selectedConvId,
+  });
+
   // Load messages when conversation selected
   const { data: convMessages, isLoading: msgsLoading } = useQuery({
     queryKey: ["conv-messages", selectedConvId],
@@ -79,6 +89,7 @@ const Chat = () => {
   }, [conversations, selectedConvId]);
 
   const selectedConv = conversations.find((c) => c.id === selectedConvId);
+  const selectedConvView = convDetail || selectedConv;
 
   // ─── Mutations ─────────────────────────────────────────────────
   const deleteConvMutation = useMutation({
@@ -90,6 +101,18 @@ const Chat = () => {
         setMessages([]);
       }
       toast.success("会话已删除");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const renameConvMutation = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      chatApi.updateConversation(id, title),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["conversations"] });
+      await refetchConvDetail();
+      toast.success("会话标题已更新");
+      setShowRenameConv(false);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -152,8 +175,9 @@ const Chat = () => {
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // Refresh conversation list (message_count etc)
+      // Refresh conversation list/detail (message_count etc)
       qc.invalidateQueries({ queryKey: ["conversations"] });
+      refetchConvDetail();
     } catch (err) {
       toast.error((err as Error).message || "发送失败");
     } finally {
@@ -213,6 +237,18 @@ const Chat = () => {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  setRenameTitle(conv.title);
+                  setSelectedConvId(conv.id);
+                  setShowRenameConv(true);
+                }}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-secondary transition-all"
+                title="重命名"
+              >
+                <Pencil className="h-3 w-3 text-muted-foreground" />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   deleteConvMutation.mutate(conv.id);
                 }}
                 className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 transition-all"
@@ -260,17 +296,28 @@ const Chat = () => {
               </button>
               <div>
                 <h3 className="text-sm font-semibold text-foreground">
-                  {selectedConv?.title || "新对话"}
+                  {selectedConvView?.title || "新对话"}
                 </h3>
                 <div className="text-[11px] text-muted-foreground">
-                  {selectedConv
-                    ? `${selectedConv.message_count} 条消息`
+                  {selectedConvView
+                    ? `${selectedConvView.message_count} 条消息`
                     : selectedKbs.length > 0
                       ? `已选 ${selectedKbs.length} 个知识库`
                       : "选择知识库开始对话"}
                 </div>
               </div>
             </div>
+            {selectedConvId && (
+              <button
+                onClick={() => {
+                  setRenameTitle(selectedConvView?.title || "");
+                  setShowRenameConv(true);
+                }}
+                className="text-[12px] px-2.5 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              >
+                重命名
+              </button>
+            )}
           </div>
 
           <div className="flex-1 overflow-auto p-4 space-y-4">
@@ -450,6 +497,31 @@ const Chat = () => {
               </label>
             ))}
           </div>
+        </FormField>
+      </FormDialog>
+
+      <FormDialog
+        open={showRenameConv}
+        onClose={() => setShowRenameConv(false)}
+        title="重命名会话"
+        footer={
+          <>
+            <DialogButton onClick={() => setShowRenameConv(false)}>取消</DialogButton>
+            <DialogButton
+              variant="primary"
+              disabled={!selectedConvId || !renameTitle.trim() || renameConvMutation.isPending}
+              onClick={() => {
+                if (!selectedConvId) return;
+                renameConvMutation.mutate({ id: selectedConvId, title: renameTitle.trim() });
+              }}
+            >
+              {renameConvMutation.isPending ? "保存中..." : "保存"}
+            </DialogButton>
+          </>
+        }
+      >
+        <FormField label="会话标题" required>
+          <FormInput value={renameTitle} onChange={setRenameTitle} placeholder="输入会话标题" />
         </FormField>
       </FormDialog>
     </AppLayout>

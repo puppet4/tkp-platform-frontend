@@ -6,6 +6,7 @@ import {
   permissionsApi,
   type DeletionProofData,
   type DeletionRequestData,
+  type PermissionPolicySnapshotData,
   type TenantRolePermissionData,
 } from "@/lib/api";
 import {
@@ -24,7 +25,7 @@ type Tab = "permissions" | "retention" | "pii" | "deletion";
 const Governance = () => {
   const qc = useQueryClient();
   const { uiManifest, refreshPermissions } = useAuth();
-  const { roleName, canAction, canFeature } = useRoleAccess();
+  const { roleName, canFeature } = useRoleAccess();
   const [tab, setTab] = useState<Tab>("permissions");
 
   const [showDeleteReq, setShowDeleteReq] = useState(false);
@@ -40,6 +41,7 @@ const Governance = () => {
   const [selectedRole, setSelectedRole] = useState("");
   const [editingPermissionCodes, setEditingPermissionCodes] = useState<string[]>([]);
   const [permissionFilter, setPermissionFilter] = useState("");
+  const [snapshotNote, setSnapshotNote] = useState("");
   const [retentionResourceType, setRetentionResourceType] = useState("retrieval_logs");
   const [retentionDryRun, setRetentionDryRun] = useState(true);
   const [piiText, setPiiText] = useState("");
@@ -52,10 +54,10 @@ const Governance = () => {
     { id: "pii", label: "PII 脱敏", icon: Shield },
     { id: "deletion", label: "删除治理", icon: Trash2 },
   ];
-  const canManageTenant = canAction("api.tenant.member.manage");
-  const canViewPermissionCenter = canFeature("feature.auth.permissions") || canManageTenant;
-  const canEditPermissionCenter = canManageTenant;
-  const canCreateDeletionRequest = canAction("api.tenant.read");
+  const isPermissionAdminRole = roleName === "owner" || roleName === "admin";
+  const canViewPermissionCenter = isPermissionAdminRole || canFeature("feature.auth.permissions");
+  const canEditPermissionCenter = isPermissionAdminRole;
+  const canCreateDeletionRequest = roleName.length > 0;
   const canReviewDeletion = roleName === "owner" || roleName === "admin";
   const visibleTabs = tabs.filter((item) => (item.id === "permissions" ? canViewPermissionCenter : true));
 
@@ -70,16 +72,17 @@ const Governance = () => {
   };
 
   // Permission center queries
-  const { data: permissionCatalog = [], isLoading: catalogLoading } = useQuery({
+  const { data: permissionCatalog = [], isLoading: catalogLoading, error: catalogError } = useQuery({
     queryKey: ["permission-catalog"],
     queryFn: () => permissionsApi.catalog(),
-    enabled: tab === "permissions",
+    enabled: tab === "permissions" && canEditPermissionCenter,
+    retry: false,
   });
 
-  const { data: rolePermissions = [], isLoading: rolesLoading } = useQuery({
+  const { data: rolePermissions = [], isLoading: rolesLoading, error: rolesError } = useQuery({
     queryKey: ["permission-roles"],
     queryFn: () => permissionsApi.listRoles(),
-    enabled: tab === "permissions",
+    enabled: tab === "permissions" && canEditPermissionCenter,
     retry: false,
   });
 
@@ -88,6 +91,30 @@ const Governance = () => {
     queryFn: () => permissionsApi.uiManifest(),
     enabled: tab === "permissions",
   });
+  const { data: runtimeSnapshot } = useQuery({
+    queryKey: ["permission-runtime-snapshot"],
+    queryFn: () => permissionsApi.snapshot(),
+    enabled: tab === "permissions",
+  });
+  const { data: policyCenter, error: policyCenterError } = useQuery({
+    queryKey: ["permission-policy-center"],
+    queryFn: () => permissionsApi.policyCenter(),
+    enabled: tab === "permissions" && canEditPermissionCenter,
+    retry: false,
+  });
+  const { data: defaultTemplate, error: defaultTemplateError } = useQuery({
+    queryKey: ["permission-default-template"],
+    queryFn: () => permissionsApi.defaultTemplate(),
+    enabled: tab === "permissions" && canEditPermissionCenter,
+    retry: false,
+  });
+  const { data: policySnapshots = [], error: policySnapshotsError } = useQuery({
+    queryKey: ["permission-policy-snapshots"],
+    queryFn: () => permissionsApi.listPolicySnapshots(20, 90),
+    enabled: tab === "permissions" && canEditPermissionCenter,
+    retry: false,
+  });
+  const permissionConfigError = catalogError || rolesError || policyCenterError || defaultTemplateError || policySnapshotsError;
 
   const selectedRoleData = useMemo(
     () => rolePermissions.find((r) => r.role === selectedRole),
@@ -133,6 +160,44 @@ const Governance = () => {
       await refetchRuntimeManifest();
       await refreshPermissions();
       toast.success("角色权限已重置为默认值");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const publishTemplateMutation = useMutation({
+    mutationFn: (overwriteExisting: boolean) => permissionsApi.publishDefaultTemplate(overwriteExisting),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["permission-roles"] }),
+        qc.invalidateQueries({ queryKey: ["permission-policy-center"] }),
+        qc.invalidateQueries({ queryKey: ["permission-default-template"] }),
+        qc.invalidateQueries({ queryKey: ["permission-policy-snapshots"] }),
+      ]);
+      await refetchRuntimeManifest();
+      await refreshPermissions();
+      toast.success("默认模板已发布");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const createSnapshotMutation = useMutation({
+    mutationFn: () => permissionsApi.createPolicySnapshot(snapshotNote.trim() || undefined),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["permission-policy-snapshots"] });
+      setSnapshotNote("");
+      toast.success("权限策略快照已创建");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const rollbackSnapshotMutation = useMutation({
+    mutationFn: (snapshotId: string) => permissionsApi.rollbackPolicySnapshot(snapshotId),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["permission-roles"] }),
+        qc.invalidateQueries({ queryKey: ["permission-policy-center"] }),
+        qc.invalidateQueries({ queryKey: ["permission-policy-snapshots"] }),
+      ]);
+      await refetchRuntimeManifest();
+      await refreshPermissions();
+      toast.success("已回滚到选定快照");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -259,16 +324,34 @@ const Governance = () => {
                 <span className="ml-3">版本：{runtimeManifest?.version || uiManifest?.version || "-"}</span>
               </div>
               <div className="mt-2 text-[12px] text-muted-foreground">
-                允许动作数：{runtimeManifest?.allowed_actions.length ?? uiManifest?.allowed_actions.length ?? 0}
+                允许动作数：{runtimeSnapshot?.allowed_actions.length ?? runtimeManifest?.allowed_actions.length ?? uiManifest?.allowed_actions.length ?? 0}
               </div>
+              {policyCenter && (
+                <div className="mt-2 text-[12px] text-muted-foreground">
+                  模板版本：{policyCenter.template_version} · 权限目录：{policyCenter.catalog.length} 项
+                </div>
+              )}
             </div>
 
-            {rolesLoading || catalogLoading ? (
+            {!canEditPermissionCenter && (
+              <div className="bg-card rounded-lg border border-border p-5 shadow-xs text-sm text-muted-foreground">
+                当前账号仅可查看运行时权限结果。角色矩阵编辑、模板发布、快照回滚仅限租户 owner/admin。
+              </div>
+            )}
+
+            {canEditPermissionCenter && permissionConfigError && (
+              <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-4 text-sm text-destructive">
+                权限配置数据加载失败：{(permissionConfigError as Error).message || "请稍后重试"}
+              </div>
+            )}
+
+            {canEditPermissionCenter && (rolesLoading || catalogLoading) ? (
               <div className="flex items-center justify-center py-16 gap-2">
                 <Loader2 className="h-5 w-5 text-primary animate-spin" />
                 <span className="text-sm text-muted-foreground">加载权限配置...</span>
               </div>
-            ) : (
+            ) : canEditPermissionCenter ? (
+              <>
               <div className="grid md:grid-cols-[220px_1fr] gap-4">
                 <div className="bg-card rounded-lg border border-border p-3 shadow-xs space-y-2 h-fit">
                   <div className="text-[12px] text-muted-foreground px-1">角色列表</div>
@@ -365,7 +448,83 @@ const Governance = () => {
                   </div>
                 </div>
               </div>
-            )}
+              <div className="grid lg:grid-cols-2 gap-4">
+                <div className="bg-card rounded-lg border border-border p-4 shadow-xs space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">默认模板发布</h3>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      将平台默认角色权限模板写入当前租户，可选择补齐缺省或覆盖已有配置。
+                    </p>
+                  </div>
+                  <div className="text-[12px] text-muted-foreground">
+                    模板版本：{defaultTemplate?.version || "-"} · 角色数：{defaultTemplate?.role_permissions.length || 0}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => publishTemplateMutation.mutate(false)}
+                      disabled={publishTemplateMutation.isPending}
+                      className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                    >
+                      补齐缺省（不覆盖）
+                    </button>
+                    <button
+                      onClick={() => publishTemplateMutation.mutate(true)}
+                      disabled={publishTemplateMutation.isPending}
+                      className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                    >
+                      覆盖发布
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-card rounded-lg border border-border p-4 shadow-xs space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">策略快照与回滚</h3>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      变更前建议先创建快照，支持按快照一键回滚角色权限矩阵。
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={snapshotNote}
+                      onChange={(e) => setSnapshotNote(e.target.value)}
+                      placeholder="快照备注（可选）"
+                      className="h-8 rounded-md border border-input bg-card px-3 text-sm flex-1"
+                    />
+                    <button
+                      onClick={() => createSnapshotMutation.mutate()}
+                      disabled={createSnapshotMutation.isPending}
+                      className="text-[12px] px-2.5 py-1.5 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                    >
+                      创建快照
+                    </button>
+                  </div>
+                  <div className="border border-border rounded-lg max-h-52 overflow-auto divide-y divide-border">
+                    {policySnapshots.map((item: PermissionPolicySnapshotData) => (
+                      <div key={item.snapshot_id} className="p-2.5 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-mono text-foreground truncate">{item.snapshot_id}</div>
+                          <div className="text-[11px] text-muted-foreground truncate">
+                            {new Date(item.created_at).toLocaleString("zh-CN")} · {item.note || "无备注"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => rollbackSnapshotMutation.mutate(item.snapshot_id)}
+                          disabled={rollbackSnapshotMutation.isPending}
+                          className="text-[11px] px-2 py-1 rounded border border-border hover:bg-secondary disabled:opacity-40"
+                        >
+                          回滚
+                        </button>
+                      </div>
+                    ))}
+                    {policySnapshots.length === 0 && (
+                      <div className="p-4 text-sm text-muted-foreground text-center">暂无快照记录</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              </>
+            ) : null}
           </div>
         )}
 

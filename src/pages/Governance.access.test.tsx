@@ -86,4 +86,15 @@ describe("Governance page access control", () => {
     expect(screen.queryByText("权限中心")).not.toBeInTheDocument();
     expect(screen.getByText("删除治理")).toBeInTheDocument();
   });
+
+  it("shows permission-center tab for admin role even if feature/action flags are missing", () => {
+    useRoleAccessMock.mockReturnValue({
+      roleName: "admin",
+      canAction: () => false,
+      canFeature: () => false,
+    });
+
+    render(<Governance />);
+    expect(screen.getByText("权限中心")).toBeInTheDocument();
+  });
 });

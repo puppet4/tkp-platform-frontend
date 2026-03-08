@@ -9,7 +9,7 @@ const ROUTE_REQUIRED_ACTIONS: Record<string, string[]> = {
   "/agent": ["api.agent.run.read"],
   "/tenant": ["api.tenant.read"],
   "/ops": ["api.tenant.member.manage"],
-  "/governance": ["api.tenant.member.manage"],
+  "/governance": ["api.tenant.read"],
   "/settings": ["api.user.read"],
 };
 

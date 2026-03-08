@@ -1,73 +1,59 @@
-# Welcome to your Lovable project
+# TKP 平台前端
 
-## Project info
+TKP 前端是平台的业务操作界面，面向“知识管理 + 智能问答 + 治理运营”。
+它让业务团队能够在统一 UI 中完成知识库建设、检索问答和运维治理。
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## 平台用处
 
-## How can I edit this code?
+- 知识资源管理：工作空间、知识库、文档上传与状态追踪
+- 检索与问答：基于知识库进行语义检索与对话交互
+- 治理与运营：反馈、治理、运行态与告警相关页面
+- 权限控制：按租户角色和动作权限控制可见范围
 
-There are several ways of editing your application.
+## 技术栈
 
-**Use Lovable**
+- React + TypeScript
+- Vite
+- React Router
+- TanStack Query
+- Tailwind + Radix UI
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## 本地启动
 
-Changes made via Lovable will be committed automatically to this repo.
+1. 安装依赖
 
-**Use your preferred IDE**
+```bash
+npm install
+```
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+2. 启动开发服务
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+默认地址：`http://127.0.0.1:8080`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## 联调说明（推荐）
 
-**Use GitHub Codespaces**
+前端默认通过 Vite 代理访问后端：
+- 前端请求：`/api/*`
+- 代理目标：`http://127.0.0.1:8000`
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+这样可避免浏览器跨域问题。
 
-## What technologies are used for this project?
+如需直连后端，可在 `.env` 中设置：
 
-This project is built with:
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## 常用命令
 
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+```bash
+npm run dev
+npm run build
+npm run preview
+npm run lint
+npm run test
+```

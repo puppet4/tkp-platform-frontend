@@ -4,9 +4,16 @@ import { Building2, Loader2, MailPlus, RefreshCw, UserPlus, Users } from "lucide
 import { toast } from "sonner";
 
 import { AppLayout } from "@/components/AppLayout";
+import { DialogButton, FormDialog, FormField, FormInput } from "@/components/FormDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
-import { tenantApi, type TenantData, type TenantMemberData } from "@/lib/api";
+import {
+  tenantApi,
+  usersApi,
+  type TenantData,
+  type TenantMemberData,
+  type TenantUserData,
+} from "@/lib/api";
 
 const ROLE_OPTIONS = ["owner", "admin", "member", "viewer"];
 const TENANT_STATUS_OPTIONS = ["active", "suspended"];
@@ -17,8 +24,12 @@ const TenantAdmin = () => {
   const { canAction } = useRoleAccess();
 
   const canTenantRead = canAction("api.tenant.read");
+  const canTenantCreate = canAction("api.tenant.create");
   const canTenantUpdate = canAction("api.tenant.update");
+  const canTenantDelete = canAction("api.tenant.delete");
   const canMemberManage = canAction("api.tenant.member.manage");
+  const canUserRead = canAction("api.user.read");
+  const canUserDelete = canAction("api.user.delete");
 
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [tenantName, setTenantName] = useState("");
@@ -29,6 +40,10 @@ const TenantAdmin = () => {
   const [inviteRole, setInviteRole] = useState("member");
   const [directEmail, setDirectEmail] = useState("");
   const [directRole, setDirectRole] = useState("member");
+  const [createTenantOpen, setCreateTenantOpen] = useState(false);
+  const [createTenantName, setCreateTenantName] = useState("");
+  const [createTenantSlug, setCreateTenantSlug] = useState("");
+  const [memberDetail, setMemberDetail] = useState<TenantUserData | null>(null);
 
   useEffect(() => {
     if (currentTenant?.id && !selectedTenantId) {
@@ -102,6 +117,47 @@ const TenantAdmin = () => {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const createTenantMutation = useMutation({
+    mutationFn: () =>
+      tenantApi.create({
+        name: createTenantName.trim(),
+        slug: createTenantSlug.trim(),
+      }),
+    onSuccess: async (created) => {
+      await qc.invalidateQueries({ queryKey: ["tenant-admin-list"] });
+      await refetchTenants();
+      await switchTenant(created.tenant_id);
+      setSelectedTenantId(created.tenant_id);
+      setCreateTenantName("");
+      setCreateTenantSlug("");
+      setCreateTenantOpen(false);
+      toast.success("租户创建成功，已切换到新租户");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const deleteTenantMutation = useMutation({
+    mutationFn: (tenantId: string) => tenantApi.delete(tenantId),
+    onSuccess: async (_, tenantId) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["tenant-admin-list"] }),
+        qc.invalidateQueries({ queryKey: ["tenant-admin-detail"] }),
+        qc.invalidateQueries({ queryKey: ["tenant-admin-members"] }),
+      ]);
+      const latest = await refetchTenants();
+      const list = latest.data ?? [];
+      const nextTenant = list.find((item) => item.tenant_id !== tenantId) || list[0];
+      if (nextTenant) {
+        await switchTenant(nextTenant.tenant_id);
+        setSelectedTenantId(nextTenant.tenant_id);
+      } else {
+        setSelectedTenantId("");
+      }
+      toast.success("租户已删除");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const inviteMemberMutation = useMutation({
     mutationFn: () => tenantApi.inviteMember(selectedTenantId, inviteEmail.trim(), inviteRole),
     onSuccess: async () => {
@@ -135,8 +191,14 @@ const TenantAdmin = () => {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const removeMemberMutation = useMutation({
-    mutationFn: (userId: string) => tenantApi.removeMember(selectedTenantId, userId),
+  const loadMemberDetailMutation = useMutation({
+    mutationFn: (userId: string) => usersApi.get(userId),
+    onSuccess: (data) => setMemberDetail(data),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const removeUserMutation = useMutation({
+    mutationFn: (userId: string) => usersApi.remove(userId),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["tenant-admin-members", selectedTenantId] });
       toast.success("成员已移除");
@@ -173,18 +235,40 @@ const TenantAdmin = () => {
             </h1>
             <p className="text-sm text-muted-foreground mt-1">维护租户信息、成员邀请与角色分配</p>
           </div>
-          <button
-            onClick={() => {
-              qc.invalidateQueries({ queryKey: ["tenant-admin-list"] });
-              qc.invalidateQueries({ queryKey: ["tenant-admin-detail"] });
-              qc.invalidateQueries({ queryKey: ["tenant-admin-members"] });
-              qc.invalidateQueries({ queryKey: ["tenant-admin-invitations"] });
-            }}
-            className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary transition-colors"
-          >
-            <RefreshCw className="h-3.5 w-3.5 inline mr-1" />
-            刷新
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {canTenantCreate && (
+              <button
+                onClick={() => setCreateTenantOpen(true)}
+                className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                新建租户
+              </button>
+            )}
+            {canTenantDelete && selectedTenantId && (
+              <button
+                onClick={() => {
+                  if (!confirm("确认删除当前租户？此操作会归档关联资源并禁用成员关系。")) return;
+                  deleteTenantMutation.mutate(selectedTenantId);
+                }}
+                disabled={deleteTenantMutation.isPending}
+                className="text-[12px] px-3 py-2 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/5 disabled:opacity-40 transition-colors"
+              >
+                删除当前租户
+              </button>
+            )}
+            <button
+              onClick={() => {
+                qc.invalidateQueries({ queryKey: ["tenant-admin-list"] });
+                qc.invalidateQueries({ queryKey: ["tenant-admin-detail"] });
+                qc.invalidateQueries({ queryKey: ["tenant-admin-members"] });
+                qc.invalidateQueries({ queryKey: ["tenant-admin-invitations"] });
+              }}
+              className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary transition-colors"
+            >
+              <RefreshCw className="h-3.5 w-3.5 inline mr-1" />
+              刷新
+            </button>
+          </div>
         </div>
 
         {!canTenantRead ? (
@@ -418,13 +502,22 @@ const TenantAdmin = () => {
                             </td>
                             <td className="px-3 py-2">{member.status}</td>
                             <td className="px-3 py-2 text-right">
-                              <button
-                                onClick={() => removeMemberMutation.mutate(member.user_id)}
-                                disabled={removeMemberMutation.isPending || member.role === "owner"}
-                                className="text-[12px] px-2.5 py-1.5 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/5 disabled:opacity-40"
-                              >
-                                移除
-                              </button>
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  onClick={() => loadMemberDetailMutation.mutate(member.user_id)}
+                                  disabled={!canUserRead || loadMemberDetailMutation.isPending}
+                                  className="text-[12px] px-2.5 py-1.5 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                                >
+                                  详情
+                                </button>
+                                <button
+                                  onClick={() => removeUserMutation.mutate(member.user_id)}
+                                  disabled={!canUserDelete || removeUserMutation.isPending || member.role === "owner"}
+                                  className="text-[12px] px-2.5 py-1.5 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/5 disabled:opacity-40"
+                                >
+                                  移除
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -444,6 +537,75 @@ const TenantAdmin = () => {
           </>
         )}
       </div>
+
+      <FormDialog
+        open={createTenantOpen}
+        onClose={() => {
+          setCreateTenantOpen(false);
+          setCreateTenantName("");
+          setCreateTenantSlug("");
+        }}
+        title="新建租户"
+        description="创建租户后会自动初始化默认工作空间"
+        footer={
+          <>
+            <DialogButton
+              onClick={() => {
+                setCreateTenantOpen(false);
+                setCreateTenantName("");
+                setCreateTenantSlug("");
+              }}
+            >
+              取消
+            </DialogButton>
+            <DialogButton
+              variant="primary"
+              disabled={!createTenantName.trim() || !createTenantSlug.trim() || createTenantMutation.isPending}
+              onClick={() => createTenantMutation.mutate()}
+            >
+              {createTenantMutation.isPending ? "创建中..." : "创建租户"}
+            </DialogButton>
+          </>
+        }
+      >
+        <FormField label="租户名称" required>
+          <FormInput value={createTenantName} onChange={setCreateTenantName} placeholder="如：AI 产品部" />
+        </FormField>
+        <FormField label="租户 Slug" required hint="仅支持小写字母、数字与 -">
+          <FormInput value={createTenantSlug} onChange={setCreateTenantSlug} placeholder="如：ai-product" />
+        </FormField>
+      </FormDialog>
+
+      <FormDialog
+        open={!!memberDetail}
+        onClose={() => setMemberDetail(null)}
+        title="成员详情"
+        width="max-w-md"
+        footer={<DialogButton onClick={() => setMemberDetail(null)}>关闭</DialogButton>}
+      >
+        {memberDetail ? (
+          <div className="space-y-2 text-sm">
+            <div className="text-muted-foreground">用户 ID</div>
+            <div className="font-mono text-[12px] break-all">{memberDetail.user_id}</div>
+            <div className="text-muted-foreground mt-3">邮箱</div>
+            <div className="text-foreground">{memberDetail.email}</div>
+            <div className="text-muted-foreground mt-3">显示名</div>
+            <div className="text-foreground">{memberDetail.display_name}</div>
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <div>
+                <div className="text-muted-foreground">用户状态</div>
+                <div className="text-foreground">{memberDetail.user_status}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">租户角色</div>
+                <div className="text-foreground">{memberDetail.tenant_role}</div>
+              </div>
+            </div>
+            <div className="text-muted-foreground mt-3">成员关系</div>
+            <div className="text-foreground">{memberDetail.membership_status}</div>
+          </div>
+        ) : null}
+      </FormDialog>
     </AppLayout>
   );
 };

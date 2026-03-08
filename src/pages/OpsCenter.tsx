@@ -43,6 +43,8 @@ const OpsCenter = () => {
   const [showRollback, setShowRollback] = useState<string | null>(null);
   const [showNewWebhook, setShowNewWebhook] = useState(false);
   const [showNewRollout, setShowNewRollout] = useState(false);
+  const [editingQuotaId, setEditingQuotaId] = useState<string | null>(null);
+  const [editingWebhookId, setEditingWebhookId] = useState<string | null>(null);
 
   const [formTitle, setFormTitle] = useState("");
   const [formDesc, setFormDesc] = useState("");
@@ -62,6 +64,8 @@ const OpsCenter = () => {
 
   const [formUrl, setFormUrl] = useState("");
   const [formWhName, setFormWhName] = useState("");
+  const [formWebhookEvents, setFormWebhookEvents] = useState("alert.critical,alert.warning");
+  const [formWebhookEnabled, setFormWebhookEnabled] = useState(true);
 
   const [quotaMetricCode, setQuotaMetricCode] = useState("chat.completion");
   const [quotaScopeType, setQuotaScopeType] = useState("tenant");
@@ -85,6 +89,24 @@ const OpsCenter = () => {
 
   const toastNoPermission = (label: string) => {
     toast.error(`当前角色无权执行：${label}`);
+  };
+
+  const resetQuotaForm = () => {
+    setEditingQuotaId(null);
+    setQuotaMetricCode("chat.completion");
+    setQuotaScopeType("tenant");
+    setQuotaScopeId("");
+    setQuotaLimit("1000");
+    setQuotaWindowMinutes("60");
+    setQuotaEnabled(true);
+  };
+
+  const resetWebhookForm = () => {
+    setEditingWebhookId(null);
+    setFormWhName("");
+    setFormUrl("");
+    setFormWebhookEnabled(true);
+    setFormWebhookEvents("alert.critical,alert.warning");
   };
 
   // ─── Data queries ──────────────────────────────────────────────
@@ -284,13 +306,26 @@ const OpsCenter = () => {
   });
 
   const upsertWebhookMutation = useMutation({
-    mutationFn: () => opsApi.upsertWebhook({ name: formWhName, url: formUrl, event_types: ["alert.critical", "alert.warning"], enabled: true }),
+    mutationFn: () => {
+      const eventTypes = formWebhookEvents
+        .split(/[,\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (eventTypes.length === 0) {
+        throw new Error("至少填写一个事件类型");
+      }
+      return opsApi.upsertWebhook({
+        name: formWhName,
+        url: formUrl,
+        event_types: eventTypes,
+        enabled: formWebhookEnabled,
+      });
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["ops-webhooks"] });
-      toast.success("Webhook 已添加");
+      toast.success(editingWebhookId ? "Webhook 已更新" : "Webhook 已添加");
       setShowNewWebhook(false);
-      setFormUrl("");
-      setFormWhName("");
+      resetWebhookForm();
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -308,7 +343,8 @@ const OpsCenter = () => {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["ops-quota-policies"] });
       await qc.invalidateQueries({ queryKey: ["ops-quota-alerts"] });
-      toast.success("配额策略已保存");
+      toast.success(editingQuotaId ? "配额策略已更新" : "配额策略已保存");
+      setEditingQuotaId(null);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -888,7 +924,12 @@ const OpsCenter = () => {
         {tab === "quotas" && (
           <div className="space-y-4">
             <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-3">
-              <h2 className="text-sm font-semibold text-foreground">配额策略维护</h2>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-sm font-semibold text-foreground">配额策略维护</h2>
+                {editingQuotaId && (
+                  <span className="text-[11px] px-2 py-1 rounded-full bg-warning/10 text-warning">编辑模式</span>
+                )}
+              </div>
               <div className="grid md:grid-cols-3 gap-3">
                 <FormField label="指标编码">
                   <FormInput value={quotaMetricCode} onChange={setQuotaMetricCode} placeholder="chat.completion" />
@@ -929,8 +970,16 @@ const OpsCenter = () => {
                 disabled={upsertQuotaMutation.isPending}
                 className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
               >
-                {upsertQuotaMutation.isPending ? "保存中..." : "保存配额策略"}
+                {upsertQuotaMutation.isPending ? "保存中..." : editingQuotaId ? "更新配额策略" : "保存配额策略"}
               </button>
+              {editingQuotaId && (
+                <button
+                  onClick={resetQuotaForm}
+                  className="ml-2 text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary"
+                >
+                  取消编辑
+                </button>
+              )}
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
@@ -944,8 +993,26 @@ const OpsCenter = () => {
                   <div className="space-y-2">
                     {quotaPolicies.map((item) => (
                       <div key={item.id} className="border border-border rounded-md p-3 text-[12px]">
-                        <div className="font-medium text-foreground">{item.metric_code}</div>
-                        <div className="text-muted-foreground">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium text-foreground">{item.metric_code}</div>
+                          {canOpsManage && (
+                            <button
+                              onClick={() => {
+                                setEditingQuotaId(item.id);
+                                setQuotaMetricCode(item.metric_code || "");
+                                setQuotaScopeType(item.scope_type || "tenant");
+                                setQuotaScopeId(item.scope_id || "");
+                                setQuotaLimit(String(item.limit_value ?? ""));
+                                setQuotaWindowMinutes(String(item.window_minutes ?? ""));
+                                setQuotaEnabled(Boolean(item.enabled));
+                              }}
+                              className="text-[11px] px-2 py-1 rounded border border-border hover:bg-secondary"
+                            >
+                              编辑配额
+                            </button>
+                          )}
+                        </div>
+                        <div className="text-muted-foreground mt-1">
                           {item.scope_type}:{item.scope_id || "*"} · {item.limit_value}/{item.window_minutes}m · {item.enabled ? "enabled" : "disabled"}
                         </div>
                       </div>
@@ -1141,7 +1208,13 @@ const OpsCenter = () => {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">告警 Webhook 配置</h2>
               {canOpsManage && (
-                <button onClick={() => setShowNewWebhook(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                <button
+                  onClick={() => {
+                    resetWebhookForm();
+                    setShowNewWebhook(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+                >
                   <Plus className="h-3.5 w-3.5" /> 添加 Webhook
                 </button>
               )}
@@ -1158,9 +1231,26 @@ const OpsCenter = () => {
                           <code className="text-[11px] text-muted-foreground font-mono truncate block">{wh.url}</code>
                         </div>
                       </div>
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0 ml-2 ${wh.enabled ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>
-                        {wh.enabled ? "启用" : "禁用"}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0 ml-2 ${wh.enabled ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>
+                          {wh.enabled ? "启用" : "禁用"}
+                        </span>
+                        {canOpsManage && (
+                          <button
+                            onClick={() => {
+                              setEditingWebhookId(wh.webhook_id);
+                              setFormWhName(wh.name || "");
+                              setFormUrl(wh.url || "");
+                              setFormWebhookEvents((wh.event_types || []).join(","));
+                              setFormWebhookEnabled(Boolean(wh.enabled));
+                              setShowNewWebhook(true);
+                            }}
+                            className="text-[11px] px-2 py-1 rounded border border-border hover:bg-secondary"
+                          >
+                            编辑 Webhook
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                       {wh.event_types.map((ev) => (
@@ -1303,22 +1393,46 @@ const OpsCenter = () => {
         warning="此操作将影响所有已部署节点" variant="destructive" confirmLabel="确认回滚" />
 
       {/* New Webhook */}
-      <FormDialog open={showNewWebhook} onClose={() => { setShowNewWebhook(false); setFormUrl(""); setFormWhName(""); }} title="添加 Webhook"
+      <FormDialog
+        open={showNewWebhook}
+        onClose={() => {
+          setShowNewWebhook(false);
+          resetWebhookForm();
+        }}
+        title={editingWebhookId ? "编辑 Webhook" : "添加 Webhook"}
         footer={<>
-          <DialogButton onClick={() => setShowNewWebhook(false)}>取消</DialogButton>
+          <DialogButton
+            onClick={() => {
+              setShowNewWebhook(false);
+              resetWebhookForm();
+            }}
+          >
+            取消
+          </DialogButton>
           <DialogButton variant="primary" disabled={!canOpsManage || !formUrl || !formWhName || upsertWebhookMutation.isPending}
             onClick={() => {
               if (!canOpsManage) {
-                toastNoPermission("添加 Webhook");
+                toastNoPermission(editingWebhookId ? "编辑 Webhook" : "添加 Webhook");
                 return;
               }
               upsertWebhookMutation.mutate();
             }}>
-            {upsertWebhookMutation.isPending ? "添加中..." : "添加"}
+            {upsertWebhookMutation.isPending ? "提交中..." : editingWebhookId ? "保存更新" : "添加"}
           </DialogButton>
         </>}>
         <FormField label="名称" required><FormInput value={formWhName} onChange={setFormWhName} placeholder="如：Slack 告警" /></FormField>
         <FormField label="Webhook URL" required><FormInput value={formUrl} onChange={setFormUrl} placeholder="https://..." /></FormField>
+        <FormField label="事件类型（逗号分隔）" required><FormInput value={formWebhookEvents} onChange={setFormWebhookEvents} placeholder="alert.critical,alert.warning" /></FormField>
+        <FormField label="启用状态">
+          <FormSelect
+            value={formWebhookEnabled ? "true" : "false"}
+            onChange={(v) => setFormWebhookEnabled(v === "true")}
+            options={[
+              { value: "true", label: "enabled" },
+              { value: "false", label: "disabled" },
+            ]}
+          />
+        </FormField>
       </FormDialog>
     </AppLayout>
   );

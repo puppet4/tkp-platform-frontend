@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/AppLayout";
 import {
   FolderOpen, Database, FileText, Plus, Search,
@@ -48,7 +48,7 @@ const Resources = () => {
   const [selectedKb, setSelectedKb] = useState<KnowledgeBaseData | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<DocumentData | null>(null);
   const [search, setSearch] = useState("");
-  const [docTab, setDocTab] = useState<"versions" | "chunks">("versions");
+  const [docTab, setDocTab] = useState<"versions" | "chunks" | "ingestion">("versions");
   const [chunkPage, setChunkPage] = useState(1);
 
   // Dialogs
@@ -80,6 +80,8 @@ const Resources = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [ingestionJobId, setIngestionJobId] = useState("");
+  const [deadLetterReason, setDeadLetterReason] = useState("");
 
   const canWorkspaceCreate = canAction("api.workspace.create");
   const canWorkspaceUpdate = canAction("api.workspace.update");
@@ -115,6 +117,17 @@ const Resources = () => {
     view === "doc-detail" && docTab === "chunks" ? selectedDoc?.id : undefined,
     chunkPage,
   );
+  const {
+    data: ingestionJob,
+    isLoading: ingestionLoading,
+    isFetching: ingestionFetching,
+    refetch: refetchIngestionJob,
+  } = useQuery({
+    queryKey: ["ingestion-job", ingestionJobId],
+    queryFn: () => documentApi.getIngestionJob(ingestionJobId),
+    enabled: view === "doc-detail" && docTab === "ingestion" && !!ingestionJobId,
+    refetchInterval: (query) => ((query.state.data as { terminal?: boolean } | undefined)?.terminal ? false : 3000),
+  });
 
   const { data: wsMembers = [] } = useWorkspaceMembers(managingWs?.id);
   const { data: kbMembers = [] } = useKbMembers(managingKb?.id);
@@ -145,6 +158,30 @@ const Resources = () => {
   const updateDoc = useUpdateDocument();
   const deleteDoc = useDeleteDocument();
   const reindexDoc = useReindexDocument();
+  const retryIngestionJobMutation = useMutation({
+    mutationFn: (jobId: string) => documentApi.retryIngestionJob(jobId),
+    onSuccess: (data) => {
+      setIngestionJobId(data.job_id);
+      refetchIngestionJob();
+      toast({ title: "任务已重新入队", description: `Job: ${data.job_id}` });
+    },
+    onError: (e: Error) => {
+      toast({ title: "重试失败", description: e.message, variant: "destructive" });
+    },
+  });
+  const deadLetterJobMutation = useMutation({
+    mutationFn: ({ jobId, reason }: { jobId: string; reason?: string }) =>
+      documentApi.deadLetterIngestionJob(jobId, reason),
+    onSuccess: (data) => {
+      setIngestionJobId(data.job_id);
+      setDeadLetterReason("");
+      refetchIngestionJob();
+      toast({ title: "任务已标记死信", description: `Job: ${data.job_id}` });
+    },
+    onError: (e: Error) => {
+      toast({ title: "死信操作失败", description: e.message, variant: "destructive" });
+    },
+  });
 
   const handleCreateWs = async () => {
     if (!canWorkspaceCreate) {
@@ -166,14 +203,20 @@ const Resources = () => {
       toastNoPermission("编辑工作空间");
       return;
     }
+    setEditingWsId(workspace.id);
+    setEditName(workspace.name || "");
+    setEditSlug(workspace.slug || "");
+    setEditDesc(workspace.description || "");
     try {
       const latest = await workspaceApi.get(workspace.id);
-      setEditingWsId(workspace.id);
       setEditName(latest.name);
       setEditSlug(latest.slug);
       setEditDesc(latest.description || "");
     } catch (e) {
-      toast({ title: "加载失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
+      toast({
+        title: "已使用当前数据进入编辑",
+        description: e instanceof ApiError ? e.message : "未获取到最新详情，请保存前再次确认",
+      });
     }
   };
 
@@ -223,13 +266,18 @@ const Resources = () => {
       toastNoPermission("编辑知识库");
       return;
     }
+    setEditingKbId(kb.id);
+    setEditName(kb.name || "");
+    setEditDesc(kb.description || "");
     try {
       const latest = await kbApi.get(kb.id);
-      setEditingKbId(kb.id);
       setEditName(latest.name);
       setEditDesc(latest.description || "");
     } catch (e) {
-      toast({ title: "加载失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
+      toast({
+        title: "已使用当前数据进入编辑",
+        description: e instanceof ApiError ? e.message : "未获取到最新详情，请保存前再次确认",
+      });
     }
   };
 
@@ -261,8 +309,10 @@ const Resources = () => {
     }
     if (!selectedKb || !selectedFile) return;
     try {
-      await uploadDoc.mutateAsync({ kbId: selectedKb.id, file: selectedFile });
-      toast({ title: "文档上传成功", description: "正在处理中…" });
+      const result = await uploadDoc.mutateAsync({ kbId: selectedKb.id, file: selectedFile });
+      setIngestionJobId(result.job_id);
+      setDocTab("ingestion");
+      toast({ title: "文档上传成功", description: `入库任务已创建：${result.job_id}` });
       setShowUploadDoc(false);
       resetForm();
     } catch (e) {
@@ -323,8 +373,10 @@ const Resources = () => {
     }
     if (!showConfirmReindex) return;
     try {
-      await reindexDoc.mutateAsync(showConfirmReindex.id);
-      toast({ title: "重建索引任务已提交" });
+      const result = await reindexDoc.mutateAsync(showConfirmReindex.id);
+      setIngestionJobId(result.job_id);
+      setDocTab("ingestion");
+      toast({ title: "重建索引任务已提交", description: `任务 ID：${result.job_id}` });
       setShowConfirmReindex(null);
     } catch (e) {
       toast({ title: "操作失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
@@ -584,11 +636,21 @@ const Resources = () => {
                 </button>
                 <h2 className="text-lg font-semibold text-foreground">{selectedWs.name} / 知识库</h2>
               </div>
-              {canKbCreate && (
-                <button onClick={() => setShowCreateKb(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                  <Plus className="h-3.5 w-3.5" /> 创建知识库
-                </button>
-              )}
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {canWorkspaceUpdate && (
+                  <button
+                    onClick={() => openWorkspaceEditor(selectedWs)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-secondary transition-colors"
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> 编辑工作空间
+                  </button>
+                )}
+                {canKbCreate && (
+                  <button onClick={() => setShowCreateKb(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                    <Plus className="h-3.5 w-3.5" /> 创建知识库
+                  </button>
+                )}
+              </div>
             </div>
             <div className="relative max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -680,11 +742,21 @@ const Resources = () => {
                   )}
                 </div>
               </div>
-              {canDocumentWrite && (
-                <button onClick={() => setShowUploadDoc(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                  <Upload className="h-3.5 w-3.5" /> 上传文档
-                </button>
-              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                {canKbUpdate && (
+                  <button
+                    onClick={() => openKbEditor(selectedKb)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-secondary transition-colors"
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> 编辑知识库
+                  </button>
+                )}
+                {canDocumentWrite && (
+                  <button onClick={() => setShowUploadDoc(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                    <Upload className="h-3.5 w-3.5" /> 上传文档
+                  </button>
+                )}
+              </div>
             </div>
             <div className="relative max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -711,7 +783,7 @@ const Resources = () => {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); }}
+                            <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); setIngestionJobId(""); setDeadLetterReason(""); }}
                               className="font-medium text-foreground truncate max-w-[240px] hover:text-primary transition-colors text-left">
                               {doc.title}
                             </button>
@@ -732,7 +804,7 @@ const Resources = () => {
                                 <RefreshCw className="h-3.5 w-3.5 text-warning" />
                               </button>
                             )}
-                            <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); }}
+                            <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); setIngestionJobId(""); setDeadLetterReason(""); }}
                               className="p-1 rounded hover:bg-secondary" title="详情">
                               <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                             </button>
@@ -762,7 +834,7 @@ const Resources = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <button onClick={() => { setView("doc-list"); setSelectedDoc(null); }} className="p-1.5 rounded-md hover:bg-secondary transition-colors">
+                <button onClick={() => { setView("doc-list"); setSelectedDoc(null); setIngestionJobId(""); setDeadLetterReason(""); }} className="p-1.5 rounded-md hover:bg-secondary transition-colors">
                   <ArrowLeft className="h-4 w-4 text-muted-foreground" />
                 </button>
                 <div>
@@ -798,6 +870,13 @@ const Resources = () => {
                 className={`flex items-center gap-1.5 px-3 py-2.5 text-sm transition-colors relative ${docTab === "chunks" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}>
                 <Layers className="h-3.5 w-3.5" /> 切片列表
                 {docTab === "chunks" && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
+              </button>
+              <button
+                onClick={() => setDocTab("ingestion")}
+                className={`flex items-center gap-1.5 px-3 py-2.5 text-sm transition-colors relative ${docTab === "ingestion" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                入库任务
+                {docTab === "ingestion" && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />}
               </button>
             </div>
 
@@ -861,6 +940,94 @@ const Resources = () => {
                   )}
                 </div>
               )
+            )}
+
+            {docTab === "ingestion" && (
+              <div className="space-y-3">
+                <div className="bg-card rounded-lg border border-border p-4 shadow-xs space-y-3">
+                  <div className="text-sm font-semibold text-foreground">入库任务运维</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input
+                      value={ingestionJobId}
+                      onChange={(e) => setIngestionJobId(e.target.value.trim())}
+                      placeholder="输入 job_id（上传/重建索引后会自动填充）"
+                      className="h-9 rounded-md border border-input bg-card px-3 text-sm flex-1 min-w-[260px]"
+                    />
+                    <button
+                      onClick={() => refetchIngestionJob()}
+                      disabled={!ingestionJobId}
+                      className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                    >
+                      查询任务
+                    </button>
+                  </div>
+                  {ingestionLoading || ingestionFetching ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      任务状态加载中...
+                    </div>
+                  ) : ingestionJob ? (
+                    <div className="space-y-3">
+                      <div className="grid md:grid-cols-3 gap-3">
+                        <div className="border border-border rounded-md p-3">
+                          <div className="text-[11px] text-muted-foreground">状态</div>
+                          <div className="text-sm font-medium text-foreground mt-1">{ingestionJob.status}</div>
+                        </div>
+                        <div className="border border-border rounded-md p-3">
+                          <div className="text-[11px] text-muted-foreground">阶段</div>
+                          <div className="text-sm font-medium text-foreground mt-1">{ingestionJob.stage}</div>
+                        </div>
+                        <div className="border border-border rounded-md p-3">
+                          <div className="text-[11px] text-muted-foreground">进度</div>
+                          <div className="text-sm font-medium text-foreground mt-1">{ingestionJob.progress}%</div>
+                        </div>
+                      </div>
+                      <div className="border border-border rounded-md p-3 text-sm">
+                        <div className="text-[11px] text-muted-foreground mb-1">诊断</div>
+                        <div className="text-foreground">{ingestionJob.diagnosis.summary}</div>
+                        <div className="text-muted-foreground mt-1">{ingestionJob.diagnosis.suggestion}</div>
+                      </div>
+                      {canDocumentWrite && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={() => retryIngestionJobMutation.mutate(ingestionJob.job_id)}
+                              disabled={!ingestionJob.retryable || !ingestionJob.can_retry_now || retryIngestionJobMutation.isPending}
+                              className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                            >
+                              {retryIngestionJobMutation.isPending ? "重试中..." : "立即重试"}
+                            </button>
+                            <input
+                              value={deadLetterReason}
+                              onChange={(e) => setDeadLetterReason(e.target.value)}
+                              placeholder="死信原因（可选）"
+                              className="h-9 rounded-md border border-input bg-card px-3 text-sm flex-1 min-w-[220px]"
+                            />
+                            <button
+                              onClick={() => deadLetterJobMutation.mutate({ jobId: ingestionJob.job_id, reason: deadLetterReason || undefined })}
+                              disabled={ingestionJob.status === "completed" || deadLetterJobMutation.isPending}
+                              className="text-[12px] px-3 py-2 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/5 disabled:opacity-40"
+                            >
+                              {deadLetterJobMutation.isPending ? "处理中..." : "标记死信"}
+                            </button>
+                          </div>
+                          {!ingestionJob.can_retry_now && ingestionJob.retryable && (
+                            <div className="text-[11px] text-muted-foreground">
+                              当前暂不可重试，预计 {ingestionJob.retry_in_seconds} 秒后可再次尝试。
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={<AlertCircle className="h-8 w-8" />}
+                      title="暂无任务数据"
+                      description="请先输入任务 ID 查询，或通过上传/重建索引自动生成任务"
+                    />
+                  )}
+                </div>
+              </div>
             )}
           </div>
         )}

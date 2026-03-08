@@ -4,7 +4,6 @@ import { retrievalApi, kbApi, type RetrievalHitData, type KnowledgeBaseData } fr
 import { Search, SlidersHorizontal, FileText, Database, Loader2, AlertCircle, ChevronDown } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
 
 const SearchPage = () => {
   const [searchParams] = useSearchParams();
@@ -157,6 +156,14 @@ const SearchPage = () => {
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">重排已应用</span>
               )}
             </div>
+            {result.hits.length === 0 && (
+              <div className="bg-card rounded-lg border border-warning/30 p-4">
+                <div className="text-sm font-medium text-foreground">未命中结果</div>
+                <div className="text-[12px] text-muted-foreground mt-1">
+                  可先检查：1) 文档是否已完成入库并为就绪状态；2) 查询词是否过短；3) 尝试切换策略为“关键词”或放宽检索范围。
+                </div>
+              </div>
+            )}
             {result.hits.map((r: RetrievalHitData) => (
               <div
                 key={r.chunk_id}

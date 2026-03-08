@@ -3,8 +3,8 @@ import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   FolderOpen, Database, FileText, Plus, Search,
-  ChevronRight, ArrowLeft, MoreHorizontal, Upload, RefreshCw,
-  AlertCircle, Layers, Eye, Loader2
+  ChevronRight, ArrowLeft, Upload, RefreshCw,
+  AlertCircle, Layers, Eye, Loader2, Trash2
 } from "lucide-react";
 import { FormDialog, FormField, FormInput, FormTextarea, DialogButton } from "@/components/FormDialog";
 import { useToast } from "@/hooks/use-toast";
@@ -13,9 +13,10 @@ import { LoadingSkeleton } from "@/components/UniversalStates";
 import { PageTabs } from "@/components/PageTabs";
 import {
   useWorkspaces, useCreateWorkspace,
-  useKnowledgeBases, useKbStats, useCreateKb,
-  useDocuments, useUploadDocument, useReindexDocument,
+  useKnowledgeBases, useKbStats, useCreateKb, useDeleteKb,
+  useDocuments, useUploadDocument, useReindexDocument, useDeleteDocument,
   useDocumentVersions, useDocumentChunks,
+  useDeleteWorkspace,
 } from "@/hooks/useResources";
 import type { WorkspaceData, KnowledgeBaseData, DocumentData } from "@/lib/api";
 import { ApiError } from "@/lib/api";
@@ -63,8 +64,11 @@ const Resources = () => {
 
   // ─── Mutations ────────────────────────────────────────────────
   const createWs = useCreateWorkspace();
+  const deleteWs = useDeleteWorkspace();
   const createKb = useCreateKb();
+  const deleteKb = useDeleteKb();
   const uploadDoc = useUploadDocument();
+  const deleteDoc = useDeleteDocument();
   const reindexDoc = useReindexDocument();
 
   const handleCreateWs = async () => {
@@ -110,6 +114,51 @@ const Resources = () => {
       setShowConfirmReindex(null);
     } catch (e) {
       toast({ title: "操作失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteWorkspace = async (workspace: WorkspaceData) => {
+    if (!confirm(`确认删除工作空间「${workspace.name}」？`)) return;
+    try {
+      await deleteWs.mutateAsync(workspace.id);
+      if (selectedWs?.id === workspace.id) {
+        setSelectedWs(null);
+        setSelectedKb(null);
+        setSelectedDoc(null);
+        setView("workspaces");
+      }
+      toast({ title: "工作空间已删除" });
+    } catch (e) {
+      toast({ title: "删除失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteKb = async (kb: KnowledgeBaseData) => {
+    if (!confirm(`确认删除知识库「${kb.name}」？`)) return;
+    try {
+      await deleteKb.mutateAsync(kb.id);
+      if (selectedKb?.id === kb.id) {
+        setSelectedKb(null);
+        setSelectedDoc(null);
+        setView("kb-list");
+      }
+      toast({ title: "知识库已删除" });
+    } catch (e) {
+      toast({ title: "删除失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteDoc = async (doc: DocumentData) => {
+    if (!confirm(`确认删除文档「${doc.title}」？`)) return;
+    try {
+      await deleteDoc.mutateAsync(doc.id);
+      if (selectedDoc?.id === doc.id) {
+        setSelectedDoc(null);
+        setView("doc-list");
+      }
+      toast({ title: "文档已删除" });
+    } catch (e) {
+      toast({ title: "删除失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
     }
   };
 
@@ -193,8 +242,12 @@ const Resources = () => {
                       <div className="h-9 w-9 rounded-lg bg-accent/10 flex items-center justify-center">
                         <FolderOpen className="h-4 w-4 text-accent" />
                       </div>
-                      <button onClick={e => e.stopPropagation()} className="p-1 rounded hover:bg-secondary opacity-0 group-hover:opacity-100 transition-opacity">
-                        <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(ws); }}
+                        className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="删除工作空间"
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
                       </button>
                     </div>
                     <h3 className="text-sm font-semibold text-foreground mt-3 group-hover:text-primary transition-colors">{ws.name}</h3>
@@ -253,8 +306,12 @@ const Resources = () => {
                         <td className="px-4 py-3">{statusBadge(kb.status)}</td>
                         <td className="px-4 py-3 text-[11px] text-muted-foreground font-mono">{kb.embedding_model}</td>
                         <td className="px-4 py-3">
-                          <button onClick={e => e.stopPropagation()} className="p-1 rounded hover:bg-secondary">
-                            <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteKb(kb); }}
+                            className="p-1 rounded hover:bg-destructive/10"
+                            title="删除知识库"
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
                           </button>
                         </td>
                       </tr>
@@ -336,6 +393,9 @@ const Resources = () => {
                             <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); }}
                               className="p-1 rounded hover:bg-secondary" title="详情">
                               <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                            </button>
+                            <button onClick={() => handleDeleteDoc(doc)} className="p-1 rounded hover:bg-destructive/10" title="删除">
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
                             </button>
                           </div>
                         </td>

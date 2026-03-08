@@ -301,7 +301,7 @@ const OpsCenter = () => {
                         <td className="px-4 py-3">
                           <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
                             t.severity === "critical" ? "bg-destructive/10 text-destructive" :
-                            t.severity === "high" ? "bg-warning/10 text-warning" :
+                            t.severity === "warn" ? "bg-warning/10 text-warning" :
                             "bg-info/10 text-info"
                           }`}>{t.severity}</span>
                         </td>

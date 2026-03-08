@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
-import { governanceApi, permissionsApi, type DeletionProofData, type PermissionUIManifestData } from "@/lib/api";
+import { governanceApi, opsApi, type DeletionProofData, type DeletionRequestData } from "@/lib/api";
 import {
   Shield, Trash2, Key, CheckCircle, XCircle, Play,
-  FileCheck, Lock, Unlock, AlertTriangle, Camera, History,
-  EyeOff, Sparkles, RefreshCw, Loader2
+  FileCheck, Lock, Unlock, Loader2
 } from "lucide-react";
 import { FormDialog, FormField, FormInput, FormTextarea, FormSelect, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
@@ -13,13 +12,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 
 type Tab = "permissions" | "deletion";
-
-const statusConfig: Record<string, { label: string; cls: string }> = {
-  pending: { label: "待审批", cls: "bg-warning/10 text-warning" },
-  approved: { label: "已批准", cls: "bg-info/10 text-info" },
-  rejected: { label: "已拒绝", cls: "bg-destructive/10 text-destructive" },
-  executed: { label: "已执行", cls: "bg-success/10 text-success" },
-};
 
 const Governance = () => {
   const qc = useQueryClient();
@@ -33,11 +25,6 @@ const Governance = () => {
   const [formReason, setFormReason] = useState("");
   const [formTargetType, setFormTargetType] = useState("document");
   const [rejectReason, setRejectReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  // We don't have a "list deletion requests" endpoint in the API spec,
-  // so the deletion tab will show create + action buttons.
-  // The permissions tab uses the uiManifest from auth context.
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: "permissions", label: "权限中心", icon: Key },
@@ -47,6 +34,7 @@ const Governance = () => {
   const createDeletionMutation = useMutation({
     mutationFn: () => governanceApi.createDeletionRequest(formTargetType, formTarget, formReason),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["governance-deletion-requests"] });
       toast.success("删除请求已提交");
       setShowDeleteReq(false);
       setFormTarget("");
@@ -57,19 +45,33 @@ const Governance = () => {
 
   const approveMutation = useMutation({
     mutationFn: (id: string) => governanceApi.approveDeletion(id),
-    onSuccess: () => { toast.success("审批通过"); setShowConfirm(null); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["governance-deletion-requests"] });
+      toast.success("审批通过");
+      setShowConfirm(null);
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const rejectMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => governanceApi.rejectDeletion(id, reason),
-    onSuccess: () => { toast.success("审批拒绝"); setShowConfirm(null); setRejectReason(""); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["governance-deletion-requests"] });
+      toast.success("审批拒绝");
+      setShowConfirm(null);
+      setRejectReason("");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const executeMutation = useMutation({
     mutationFn: (id: string) => governanceApi.executeDeletion(id),
-    onSuccess: () => { toast.success("删除已执行"); setShowConfirm(null); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["governance-deletion-requests"] });
+      qc.invalidateQueries({ queryKey: ["governance-deletion-proofs"] });
+      toast.success("删除已执行");
+      setShowConfirm(null);
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -82,6 +84,20 @@ const Governance = () => {
       toast.error((e as Error).message);
     }
   };
+
+  const { data: deletionRequests = [], isLoading: requestsLoading } = useQuery({
+    queryKey: ["governance-deletion-requests"],
+    queryFn: () => governanceApi.listDeletionRequests({ limit: 50 }),
+    enabled: tab === "deletion",
+    retry: false,
+  });
+
+  const { data: deletionProofs = [], isLoading: proofsLoading } = useQuery({
+    queryKey: ["governance-deletion-proofs"],
+    queryFn: () => opsApi.listDeletionProofs({ limit: 20 }),
+    enabled: tab === "deletion",
+    retry: false,
+  });
 
   return (
     <AppLayout>
@@ -200,6 +216,57 @@ const Governance = () => {
                   </button>
                 </div>
               </div>
+            </div>
+
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs">
+              <h3 className="text-sm font-semibold text-foreground mb-3">删除请求列表</h3>
+              {requestsLoading ? (
+                <div className="text-sm text-muted-foreground">加载中...</div>
+              ) : deletionRequests.length === 0 ? (
+                <div className="text-sm text-muted-foreground">暂无删除请求记录</div>
+              ) : (
+                <div className="space-y-2">
+                  {deletionRequests.map((req: DeletionRequestData) => (
+                    <button
+                      key={req.request_id}
+                      onClick={() => setFormTarget(req.request_id)}
+                      className="w-full text-left p-3 rounded-lg border border-border hover:bg-secondary/40 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium text-foreground">{req.resource_type} · {req.resource_id}</div>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">{req.status}</span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        {req.reason || "-"} · {req.requested_at ? new Date(req.requested_at).toLocaleString("zh-CN") : "-"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs">
+              <h3 className="text-sm font-semibold text-foreground mb-3">最近删除证明</h3>
+              {proofsLoading ? (
+                <div className="text-sm text-muted-foreground">加载中...</div>
+              ) : deletionProofs.length === 0 ? (
+                <div className="text-sm text-muted-foreground">暂无删除证明记录</div>
+              ) : (
+                <div className="space-y-2">
+                  {deletionProofs.map((proof) => (
+                    <button
+                      key={proof.proof_id}
+                      onClick={() => { setProofData(proof); setShowProof(proof.proof_id); }}
+                      className="w-full text-left p-3 rounded-lg border border-border hover:bg-secondary/40 transition-colors"
+                    >
+                      <div className="text-sm font-medium text-foreground">{proof.resource_type}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        {proof.resource_id} · {new Date(proof.deleted_at).toLocaleString("zh-CN")}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

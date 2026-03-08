@@ -1,15 +1,34 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import { Settings as SettingsIcon, User, Bell, Shield, Palette, Globe } from "lucide-react";
+import { usersApi, type UserPreferencesData } from "@/lib/api";
+import { Settings as SettingsIcon, User, Bell, Shield, Palette, Globe, type LucideIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 type Tab = "profile" | "notifications" | "security" | "appearance" | "language";
+
+type TabItem = { id: Tab; label: string; icon: LucideIcon };
+
+const defaultPreferences: UserPreferencesData = {
+  theme: "light",
+  language: "zh-CN",
+  timezone: "Asia/Shanghai",
+  notifications: {
+    email: true,
+    browser: true,
+    alerts: true,
+  },
+  security: {
+    password_reset_email: true,
+    two_factor_enabled: false,
+  },
+};
 
 const Settings = () => {
   const { user } = useAuth();
@@ -17,14 +36,74 @@ const Settings = () => {
   const [tab, setTab] = useState<Tab>("profile");
   const [displayName, setDisplayName] = useState(user?.display_name || "");
   const [email] = useState(user?.email || "");
+
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifyBrowser, setNotifyBrowser] = useState(true);
   const [notifyAlerts, setNotifyAlerts] = useState(true);
-  const [theme, setTheme] = useState<"light" | "dark">(
-    document.documentElement.classList.contains("dark") ? "dark" : "light"
-  );
 
-  const tabs: { id: Tab; label: string; icon: any }[] = [
+  const [passwordResetEmail, setPasswordResetEmail] = useState(true);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+
+  const [theme, setTheme] = useState<"light" | "dark">(
+    document.documentElement.classList.contains("dark") ? "dark" : "light",
+  );
+  const [language, setLanguage] = useState("zh-CN");
+  const [timezone, setTimezone] = useState("Asia/Shanghai");
+
+  const { data: preferences, isLoading: prefsLoading } = useQuery({
+    queryKey: ["user-preferences", user?.id],
+    enabled: !!user?.id,
+    queryFn: () => usersApi.getPreferences(user!.id),
+    retry: false,
+  });
+
+  useEffect(() => {
+    setDisplayName(user?.display_name || "");
+  }, [user?.display_name]);
+
+  useEffect(() => {
+    const merged = {
+      ...defaultPreferences,
+      ...preferences,
+      notifications: {
+        ...defaultPreferences.notifications,
+        ...(preferences?.notifications || {}),
+      },
+      security: {
+        ...defaultPreferences.security,
+        ...(preferences?.security || {}),
+      },
+    };
+
+    setNotifyEmail(Boolean(merged.notifications.email));
+    setNotifyBrowser(Boolean(merged.notifications.browser));
+    setNotifyAlerts(Boolean(merged.notifications.alerts));
+
+    setPasswordResetEmail(Boolean(merged.security?.password_reset_email));
+    setTwoFactorEnabled(Boolean(merged.security?.two_factor_enabled));
+
+    setTheme(merged.theme);
+    setLanguage(merged.language || "zh-CN");
+    setTimezone(merged.timezone || "Asia/Shanghai");
+
+    if (merged.theme === "dark") document.documentElement.classList.add("dark");
+    else document.documentElement.classList.remove("dark");
+  }, [preferences]);
+
+  const updateProfileMutation = useMutation({
+    mutationFn: ({ userId, name }: { userId: string; name: string }) => usersApi.update(userId, { display_name: name }),
+    onSuccess: () => toast({ title: "个人资料已更新" }),
+    onError: (e: Error) => toast({ title: "保存失败", description: e.message, variant: "destructive" }),
+  });
+
+  const savePreferencesMutation = useMutation({
+    mutationFn: ({ userId, payload }: { userId: string; payload: UserPreferencesData }) =>
+      usersApi.upsertPreferences(userId, payload),
+    onSuccess: () => toast({ title: "设置已保存", description: "您的偏好已更新" }),
+    onError: (e: Error) => toast({ title: "保存失败", description: e.message, variant: "destructive" }),
+  });
+
+  const tabs: TabItem[] = [
     { id: "profile", label: "个人资料", icon: User },
     { id: "notifications", label: "通知偏好", icon: Bell },
     { id: "security", label: "安全设置", icon: Shield },
@@ -32,19 +111,38 @@ const Settings = () => {
     { id: "language", label: "语言与区域", icon: Globe },
   ];
 
-  const handleSave = () => {
-    toast({ title: "设置已保存", description: "您的偏好已更新" });
+  const buildPreferencesPayload = (): UserPreferencesData => ({
+    theme,
+    language,
+    timezone,
+    notifications: {
+      email: notifyEmail,
+      browser: notifyBrowser,
+      alerts: notifyAlerts,
+    },
+    security: {
+      password_reset_email: passwordResetEmail,
+      two_factor_enabled: twoFactorEnabled,
+    },
+  });
+
+  const savePreferences = () => {
+    if (!user?.id) return;
+    savePreferencesMutation.mutate({ userId: user.id, payload: buildPreferencesPayload() });
+  };
+
+  const handleSaveProfile = () => {
+    if (!user?.id || !displayName.trim()) {
+      toast({ title: "显示名称不能为空", variant: "destructive" });
+      return;
+    }
+    updateProfileMutation.mutate({ userId: user.id, name: displayName.trim() });
   };
 
   const applyTheme = (t: "light" | "dark") => {
     setTheme(t);
-    if (t === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-    localStorage.setItem("theme", t);
-    toast({ title: `已切换到${t === "dark" ? "深色" : "浅色"}模式` });
+    if (t === "dark") document.documentElement.classList.add("dark");
+    else document.documentElement.classList.remove("dark");
   };
 
   return (
@@ -58,15 +156,19 @@ const Settings = () => {
           </div>
         </div>
 
+        {prefsLoading && <div className="text-sm text-muted-foreground mb-4">正在加载偏好设置...</div>}
+
         <div className="flex flex-col md:flex-row gap-6">
-          {/* Sidebar */}
           <div className="md:w-48 shrink-0">
             <div className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
-              {tabs.map(t => (
-                <button key={t.id} onClick={() => setTab(t.id)}
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
                   className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors whitespace-nowrap ${
                     tab === t.id ? "bg-primary/5 text-primary font-medium" : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                  }`}>
+                  }`}
+                >
                   <t.icon className="h-4 w-4 shrink-0" />
                   {t.label}
                 </button>
@@ -74,7 +176,6 @@ const Settings = () => {
             </div>
           </div>
 
-          {/* Content */}
           <div className="flex-1 min-w-0">
             {tab === "profile" && (
               <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-4">
@@ -84,20 +185,22 @@ const Settings = () => {
                     <span className="text-xl font-bold text-primary">{user?.avatar_initial}</span>
                   </div>
                   <div>
-                    <div className="text-sm font-medium text-foreground">{user?.display_name}</div>
+                    <div className="text-sm font-medium text-foreground">{displayName || user?.display_name}</div>
                     <div className="text-[12px] text-muted-foreground">{user?.email}</div>
                   </div>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="displayName">显示名称</Label>
-                  <Input id="displayName" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+                  <Input id="displayName" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="email">邮箱</Label>
                   <Input id="email" value={email} disabled className="bg-secondary/50" />
                   <p className="text-[11px] text-muted-foreground">邮箱暂不支持修改</p>
                 </div>
-                <Button onClick={handleSave}>保存</Button>
+                <Button onClick={handleSaveProfile} disabled={updateProfileMutation.isPending}>
+                  {updateProfileMutation.isPending ? "保存中..." : "保存"}
+                </Button>
               </div>
             )}
 
@@ -108,7 +211,7 @@ const Settings = () => {
                   { label: "邮件通知", desc: "通过邮件接收系统通知", checked: notifyEmail, onChange: setNotifyEmail },
                   { label: "浏览器通知", desc: "通过浏览器推送接收通知", checked: notifyBrowser, onChange: setNotifyBrowser },
                   { label: "告警通知", desc: "接收运维告警和异常通知", checked: notifyAlerts, onChange: setNotifyAlerts },
-                ].map(item => (
+                ].map((item) => (
                   <div key={item.label} className="flex items-center justify-between px-3 py-3 rounded-md border border-border">
                     <div>
                       <div className="text-sm font-medium text-foreground">{item.label}</div>
@@ -117,34 +220,32 @@ const Settings = () => {
                     <Switch checked={item.checked} onCheckedChange={item.onChange} />
                   </div>
                 ))}
-                <Button onClick={handleSave}>保存</Button>
+                <Button onClick={savePreferences} disabled={savePreferencesMutation.isPending}>
+                  {savePreferencesMutation.isPending ? "保存中..." : "保存"}
+                </Button>
               </div>
             )}
 
             {tab === "security" && (
               <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-4">
                 <h2 className="text-sm font-semibold text-foreground">安全设置</h2>
-                <div className="p-4 rounded-md border border-border">
-                  <div className="text-sm font-medium text-foreground">修改密码</div>
-                  <div className="text-[11px] text-muted-foreground mt-1">上次修改：30 天前</div>
-                  <Button variant="outline" size="sm" className="mt-3"
-                    onClick={() => toast({ title: "密码重置邮件已发送" })}>
-                    重置密码
-                  </Button>
+                <div className="flex items-center justify-between px-3 py-3 rounded-md border border-border">
+                  <div>
+                    <div className="text-sm font-medium text-foreground">密码重置提醒</div>
+                    <div className="text-[11px] text-muted-foreground">在关键风险操作后发送密码重置提醒</div>
+                  </div>
+                  <Switch checked={passwordResetEmail} onCheckedChange={setPasswordResetEmail} />
                 </div>
-                <div className="p-4 rounded-md border border-border">
-                  <div className="text-sm font-medium text-foreground">两步验证</div>
-                  <div className="text-[11px] text-muted-foreground mt-1">增强账户安全性</div>
-                  <Button variant="outline" size="sm" className="mt-3"
-                    onClick={() => toast({ title: "功能开发中" })}>
-                    启用 2FA
-                  </Button>
+                <div className="flex items-center justify-between px-3 py-3 rounded-md border border-border">
+                  <div>
+                    <div className="text-sm font-medium text-foreground">两步验证开关</div>
+                    <div className="text-[11px] text-muted-foreground">当前为策略开关，后续可接入真实 2FA</div>
+                  </div>
+                  <Switch checked={twoFactorEnabled} onCheckedChange={setTwoFactorEnabled} />
                 </div>
-                <div className="p-4 rounded-md border border-border">
-                  <div className="text-sm font-medium text-foreground">活跃会话</div>
-                  <div className="text-[11px] text-muted-foreground mt-1">当前 1 个活跃会话</div>
-                  <div className="mt-2 text-[12px] text-muted-foreground">Chrome · macOS · 当前会话</div>
-                </div>
+                <Button onClick={savePreferences} disabled={savePreferencesMutation.isPending}>
+                  {savePreferencesMutation.isPending ? "保存中..." : "保存"}
+                </Button>
               </div>
             )}
 
@@ -153,21 +254,28 @@ const Settings = () => {
                 <h2 className="text-sm font-semibold text-foreground">外观设置</h2>
                 <p className="text-sm text-muted-foreground">选择界面主题，也可通过顶部导航栏快速切换。</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <button onClick={() => applyTheme("light")}
+                  <button
+                    onClick={() => applyTheme("light")}
                     className={`p-4 rounded-lg border-2 bg-card text-center transition-colors ${
                       theme === "light" ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/30"
-                    }`}>
+                    }`}
+                  >
                     <div className="text-2xl mb-1">☀️</div>
                     <div className="text-sm font-medium text-foreground">浅色模式</div>
                   </button>
-                  <button onClick={() => applyTheme("dark")}
+                  <button
+                    onClick={() => applyTheme("dark")}
                     className={`p-4 rounded-lg border-2 bg-secondary text-center transition-colors ${
                       theme === "dark" ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/30"
-                    }`}>
+                    }`}
+                  >
                     <div className="text-2xl mb-1">🌙</div>
                     <div className="text-sm font-medium text-foreground">深色模式</div>
                   </button>
                 </div>
+                <Button onClick={savePreferences} disabled={savePreferencesMutation.isPending}>
+                  {savePreferencesMutation.isPending ? "保存中..." : "保存"}
+                </Button>
               </div>
             )}
 
@@ -176,7 +284,7 @@ const Settings = () => {
                 <h2 className="text-sm font-semibold text-foreground">语言与区域</h2>
                 <div className="space-y-1.5">
                   <Label>界面语言</Label>
-                  <Select defaultValue="zh-CN">
+                  <Select value={language} onValueChange={setLanguage}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="zh-CN">简体中文</SelectItem>
@@ -186,7 +294,7 @@ const Settings = () => {
                 </div>
                 <div className="space-y-1.5">
                   <Label>时区</Label>
-                  <Select defaultValue="Asia/Shanghai">
+                  <Select value={timezone} onValueChange={setTimezone}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Asia/Shanghai">Asia/Shanghai (UTC+8)</SelectItem>
@@ -195,7 +303,9 @@ const Settings = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button onClick={handleSave}>保存</Button>
+                <Button onClick={savePreferences} disabled={savePreferencesMutation.isPending}>
+                  {savePreferencesMutation.isPending ? "保存中..." : "保存"}
+                </Button>
               </div>
             )}
           </div>

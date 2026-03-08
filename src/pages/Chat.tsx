@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import {
   chatApi,
+  feedbackApi,
   kbApi,
   type ConversationData,
   type ConversationMessageData,
@@ -89,6 +90,19 @@ const Chat = () => {
         setMessages([]);
       }
       toast.success("会话已删除");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const feedbackMutation = useMutation({
+    mutationFn: (payload: { feedback_type: "thumbs_up" | "thumbs_down"; message_id: string }) =>
+      feedbackApi.create({
+        feedback_type: payload.feedback_type,
+        conversation_id: selectedConvId || undefined,
+        message_id: payload.message_id,
+      }),
+    onSuccess: (_, vars) => {
+      toast.success(vars.feedback_type === "thumbs_up" ? "已提交好评" : "已提交差评");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -330,10 +344,18 @@ const Chat = () => {
 
                   {msg.role === "assistant" && (
                     <div className="flex items-center gap-1 mt-1.5">
-                      <button className="p-1 rounded hover:bg-secondary transition-colors">
+                      <button
+                        onClick={() => feedbackMutation.mutate({ feedback_type: "thumbs_up", message_id: msg.id })}
+                        className="p-1 rounded hover:bg-secondary transition-colors"
+                        title="好评"
+                      >
                         <ThumbsUp className="h-3 w-3 text-muted-foreground" />
                       </button>
-                      <button className="p-1 rounded hover:bg-secondary transition-colors">
+                      <button
+                        onClick={() => feedbackMutation.mutate({ feedback_type: "thumbs_down", message_id: msg.id })}
+                        className="p-1 rounded hover:bg-secondary transition-colors"
+                        title="差评"
+                      >
                         <ThumbsDown className="h-3 w-3 text-muted-foreground" />
                       </button>
                     </div>

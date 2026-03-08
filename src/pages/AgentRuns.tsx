@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { agentApi, type AgentRunBriefData, type AgentRunDetailData } from "@/lib/api";
 import { Bot, Play, Square, Clock, CheckCircle, AlertTriangle, Loader2, Eye } from "lucide-react";
@@ -14,6 +14,8 @@ const statusConfig: Record<string, { label: string; cls: string; icon: any }> = 
   cancelled: { label: "已取消", cls: "bg-muted text-muted-foreground", icon: Square },
 };
 
+const RUN_IDS_STORAGE_KEY = "tkp_agent_run_ids";
+
 const AgentRuns = () => {
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
@@ -22,6 +24,36 @@ const AgentRuns = () => {
 
   // We keep a local list of run IDs we've created to poll for status
   const [runIds, setRunIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(RUN_IDS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setRunIds(parsed.filter((v): v is string => typeof v === "string").slice(0, 50));
+      }
+    } catch {
+      // ignore invalid local cache
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(RUN_IDS_STORAGE_KEY, JSON.stringify(runIds.slice(0, 50)));
+  }, [runIds]);
+
+  const { data: serverRuns = [] } = useQuery({
+    queryKey: ["agent-runs-list"],
+    queryFn: () => agentApi.list({ limit: 50 }),
+  });
+
+  useEffect(() => {
+    if (serverRuns.length === 0) return;
+    const merged = Array.from(new Set([...serverRuns.map((r) => r.run_id), ...runIds]));
+    if (merged.join(",") !== runIds.join(",")) {
+      setRunIds(merged);
+    }
+  }, [serverRuns, runIds]);
 
   // Poll run details for all known runs
   const { data: runDetails = [], isLoading } = useQuery({

@@ -26,6 +26,18 @@ interface ApiResponse<T> {
   meta?: Record<string, unknown>;
 }
 
+function unwrapApiData<T>(json: unknown): T {
+  if (
+    typeof json === "object" &&
+    json !== null &&
+    "data" in json
+  ) {
+    return (json as ApiResponse<T>).data;
+  }
+  // Some legacy endpoints return raw JSON object without { data } envelope.
+  return json as T;
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -61,8 +73,8 @@ async function request<T>(
     throw new ApiError(res.status, errBody);
   }
 
-  const json: ApiResponse<T> = await res.json();
-  return json.data;
+  const json = await res.json().catch(() => null);
+  return unwrapApiData<T>(json);
 }
 
 // Upload helper (multipart/form-data)
@@ -82,8 +94,8 @@ async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
     throw new ApiError(res.status, errBody);
   }
 
-  const json: ApiResponse<T> = await res.json();
-  return json.data;
+  const json = await res.json().catch(() => null);
+  return unwrapApiData<T>(json);
 }
 
 // ─── Auth types ──────────────────────────────────────────────────
@@ -185,6 +197,51 @@ export const permissionsApi = {
 
   uiManifest() {
     return request<PermissionUIManifestData>("GET", "/api/permissions/ui-manifest");
+  },
+};
+
+// ─── Users types/API ────────────────────────────────────────────
+export interface TenantUserData {
+  user_id: string;
+  email: string;
+  display_name: string;
+  user_status: string;
+  tenant_role: string;
+  membership_status: string;
+}
+
+export interface UserPreferencesData {
+  theme: "light" | "dark";
+  language: string;
+  timezone: string;
+  notifications: {
+    email: boolean;
+    browser: boolean;
+    alerts: boolean;
+    [key: string]: boolean;
+  };
+  security?: {
+    password_reset_email: boolean;
+    two_factor_enabled: boolean;
+    [key: string]: boolean;
+  };
+}
+
+export const usersApi = {
+  list() {
+    return request<TenantUserData[]>("GET", "/api/users");
+  },
+  get(userId: string) {
+    return request<TenantUserData>("GET", `/api/users/${userId}`);
+  },
+  update(userId: string, data: { display_name?: string; status?: string }) {
+    return request<TenantUserData>("PATCH", `/api/users/${userId}`, data);
+  },
+  getPreferences(userId: string) {
+    return request<UserPreferencesData>("GET", `/api/users/${userId}/preferences`);
+  },
+  upsertPreferences(userId: string, data: UserPreferencesData) {
+    return request<UserPreferencesData>("PUT", `/api/users/${userId}/preferences`, data);
   },
 };
 
@@ -347,10 +404,50 @@ export const documentApi = {
     return request<{ job_id: string; status: string }>("POST", `/api/documents/${docId}/reindex`);
   },
   listVersions(docId: string) {
-    return request<DocumentVersionData[]>("GET", `/api/documents/${docId}/versions`);
+    return request<
+      Array<{
+        id: string;
+        document_id: string;
+        version: number;
+        object_key?: string | null;
+        parse_status: string;
+        created_at: string;
+      }>
+    >("GET", `/api/documents/${docId}/versions`).then((versions) =>
+      versions.map((item) => ({
+        version: item.version,
+        status: item.parse_status,
+        source_uri: item.object_key ?? null,
+        chunk_count: 0,
+        created_at: item.created_at,
+      })),
+    );
   },
   listChunks(docId: string, page = 1, size = 20) {
-    return request<DocumentChunkPageData>("GET", `/api/documents/${docId}/chunks?page=${page}&size=${size}`);
+    const offset = Math.max(0, (page - 1) * size);
+    return request<{
+      version: number;
+      total: number;
+      offset: number;
+      limit: number;
+      items: Array<{
+        id: string;
+        chunk_no: number;
+        content: string;
+        token_count: number;
+      }>;
+    }>("GET", `/api/documents/${docId}/chunks?offset=${offset}&limit=${size}`).then((chunkPage) => ({
+      total: chunkPage.total,
+      page: Math.floor(chunkPage.offset / Math.max(chunkPage.limit, 1)) + 1,
+      size: chunkPage.limit,
+      items: chunkPage.items.map((item) => ({
+        chunk_id: item.id,
+        version: chunkPage.version,
+        sequence: item.chunk_no,
+        content: item.content,
+        token_count: item.token_count,
+      })),
+    }));
   },
 };
 
@@ -424,21 +521,78 @@ export interface ChatCompletionResult {
 // ─── Chat API ────────────────────────────────────────────────────
 export const chatApi = {
   listConversations(limit = 50, offset = 0) {
-    return request<ConversationData[]>("GET", `/api/chat/conversations?limit=${limit}&offset=${offset}`);
+    return request<{
+      conversations: Array<{
+        conversation_id: string;
+        title: string;
+        kb_scope?: string[] | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+    }>("GET", `/api/chat/conversations?limit=${limit}&offset=${offset}`).then((resp) =>
+      (resp.conversations ?? []).map((item) => ({
+        id: item.conversation_id,
+        title: item.title,
+        message_count: 0,
+        kb_ids: item.kb_scope ?? undefined,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+      })),
+    );
   },
   getConversation(id: string) {
-    return request<ConversationData>("GET", `/api/chat/conversations/${id}`);
+    return request<{
+      conversation_id: string;
+      title: string;
+      message_count: number;
+      kb_scope?: string[] | null;
+      created_at: string;
+      updated_at: string;
+    }>("GET", `/api/chat/conversations/${id}`).then((item) => ({
+      id: item.conversation_id,
+      title: item.title,
+      message_count: item.message_count,
+      kb_ids: item.kb_scope ?? undefined,
+      created_at: item.created_at,
+      updated_at: item.updated_at,
+    }));
   },
   updateConversation(id: string, title: string) {
-    return request<ConversationData>("PATCH", `/api/chat/conversations/${id}`, { title });
+    return request<{
+      conversation_id: string;
+      title: string;
+      updated_at: string;
+    }>("PATCH", `/api/chat/conversations/${id}`, { title }).then((item) => ({
+      id: item.conversation_id,
+      title: item.title,
+      message_count: 0,
+      created_at: item.updated_at,
+      updated_at: item.updated_at,
+    }));
   },
   deleteConversation(id: string) {
     return request<void>("DELETE", `/api/chat/conversations/${id}`);
   },
   listMessages(conversationId: string, limit = 100, offset = 0) {
-    return request<ConversationMessageData[]>(
+    return request<{
+      messages: Array<{
+        message_id: string;
+        role: "user" | "assistant" | "system";
+        content: string;
+        citations?: Array<Record<string, unknown>>;
+        created_at: string;
+      }>;
+    }>(
       "GET",
       `/api/chat/conversations/${conversationId}/messages?limit=${limit}&offset=${offset}`,
+    ).then((resp) =>
+      (resp.messages ?? []).map((item) => ({
+        id: item.message_id,
+        role: item.role,
+        content: item.content,
+        citations: item.citations,
+        created_at: item.created_at,
+      })),
     );
   },
   completions(data: {
@@ -468,6 +622,14 @@ export interface AgentRunDetailData {
 
 // ─── Agent API ───────────────────────────────────────────────────
 export const agentApi = {
+  list(params?: { status?: string; limit?: number; offset?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<AgentRunBriefData[]>("GET", `/api/agent/runs${q ? `?${q}` : ""}`);
+  },
   create(data: { task: string; conversation_id?: string; kb_ids?: string[] }) {
     return request<AgentRunBriefData>("POST", "/api/agent/runs", data);
   },
@@ -509,7 +671,33 @@ export const feedbackApi = {
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     const q = qs.toString();
-    return request<FeedbackItemData[]>("GET", `/api/feedback${q ? `?${q}` : ""}`);
+    return request<{
+      feedbacks: Array<{
+        feedback_id: string;
+        feedback_type: string;
+        feedback_value?: string | null;
+        comment?: string | null;
+        tags?: string[] | null;
+        conversation_id?: string | null;
+        message_id?: string | null;
+        retrieval_log_id?: string | null;
+        processed: boolean;
+        created_at: string;
+      }>;
+    }>("GET", `/api/feedback${q ? `?${q}` : ""}`).then((resp) =>
+      (resp.feedbacks ?? []).map((item) => ({
+        id: item.feedback_id,
+        feedback_type: item.feedback_type,
+        feedback_value: item.feedback_value,
+        comment: item.comment,
+        tags: item.tags,
+        conversation_id: item.conversation_id,
+        message_id: item.message_id,
+        retrieval_log_id: item.retrieval_log_id,
+        processed: item.processed,
+        created_at: item.created_at,
+      })),
+    );
   },
   create(data: {
     feedback_type: string;
@@ -533,15 +721,14 @@ export const feedbackApi = {
 
 // ─── Governance types ────────────────────────────────────────────
 export interface DeletionRequestData {
-  id: string;
-  resource_type: string;
-  resource_id: string;
-  reason: string;
+  request_id: string;
+  tenant_id?: string;
+  user_id?: string;
+  resource_type?: string;
+  resource_id?: string;
+  reason?: string;
   status: string;
-  requested_by: string;
   requested_at: string;
-  proof_id?: string | null;
-  target_name?: string;
   [key: string]: unknown;
 }
 
@@ -557,6 +744,15 @@ export interface DeletionProofData {
 
 // ─── Governance API ──────────────────────────────────────────────
 export const governanceApi = {
+  listDeletionRequests(params?: { status?: string; limit?: number; offset?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status_filter", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<{ requests: DeletionRequestData[] }>("GET", `/api/governance/deletion/requests${q ? `?${q}` : ""}`)
+      .then((resp) => resp.requests ?? []);
+  },
   createDeletionRequest(resourceType: string, resourceId: string, reason: string) {
     return request<DeletionRequestData>(
       "POST",
@@ -576,7 +772,27 @@ export const governanceApi = {
     return request<unknown>("POST", `/api/governance/deletion/requests/${requestId}/execute`);
   },
   getDeletionProof(proofId: string) {
-    return request<DeletionProofData>("GET", `/api/governance/deletion/proofs/${proofId}`);
+    return request<{
+      proof_id: string;
+      request_id: string;
+      resource_type: string;
+      resource_id: string;
+      deleted_at: string;
+      data_hash?: string;
+      proof_hash?: string;
+      deleted_by?: string | null;
+    }>("GET", `/api/governance/deletion/proofs/${proofId}`).then((proof) => ({
+      proof_id: proof.proof_id,
+      deleted_at: proof.deleted_at,
+      executed_by: proof.deleted_by ?? "",
+      resource_type: proof.resource_type,
+      resource_id: proof.resource_id,
+      details: {
+        request_id: proof.request_id,
+        data_hash: proof.data_hash,
+        proof_hash: proof.proof_hash,
+      },
+    }));
   },
 };
 
@@ -678,6 +894,46 @@ export interface RetrievalQualityData {
   [key: string]: unknown;
 }
 
+interface IncidentTicketRawData {
+  ticket_id: string;
+  title: string;
+  severity: string;
+  status: string;
+  assignee_user_id?: string | null;
+  summary?: string | null;
+  resolution_note?: string | null;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+interface ReleaseRolloutRawData {
+  rollout_id: string;
+  version: string;
+  status: string;
+  canary_percent?: number;
+  note?: string | null;
+  created_at: string;
+  [key: string]: unknown;
+}
+
+function mapIncidentTicket(raw: IncidentTicketRawData): IncidentTicketData {
+  return {
+    ...raw,
+    assignee: raw.assignee_user_id ?? null,
+    description: raw.summary ?? null,
+    resolution: raw.resolution_note ?? null,
+  };
+}
+
+function mapReleaseRollout(raw: ReleaseRolloutRawData): ReleaseRolloutData {
+  return {
+    ...raw,
+    progress: raw.canary_percent ?? 0,
+    description: raw.note ?? null,
+  };
+}
+
 // ─── Ops API ─────────────────────────────────────────────────────
 export const opsApi = {
   overview(windowHours = 24) {
@@ -690,13 +946,62 @@ export const opsApi = {
     return request<Array<Record<string, unknown>>>("GET", `/api/ops/cost/leaderboard?window_hours=${windowHours}&limit=${limit}`);
   },
   ingestionAlerts(windowHours = 24) {
-    return request<IngestionAlertsData>("GET", `/api/ops/ingestion/alerts?window_hours=${windowHours}`);
+    return request<{
+      overall_status: string;
+      rules: Array<{
+        name: string;
+        status: string;
+        current: number;
+        warn_threshold: number;
+        critical_threshold: number;
+      }>;
+    }>("GET", `/api/ops/ingestion/alerts?window_hours=${windowHours}`).then((raw) => ({
+      overall_status: raw.overall_status,
+      rules: (raw.rules ?? []).map((rule) => ({
+        rule: rule.name,
+        status: rule.status,
+        current_value: rule.current,
+        threshold_warn: rule.warn_threshold,
+        threshold_critical: rule.critical_threshold,
+      })),
+    }));
   },
   sloSummary(windowHours = 24) {
-    return request<SLOSummaryData>("GET", `/api/ops/slo/mvp-summary?window_hours=${windowHours}`);
+    return request<{
+      overall_status: string;
+      checks: Array<{
+        name: string;
+        current: number;
+        target: number;
+        status: string;
+      }>;
+    }>("GET", `/api/ops/slo/mvp-summary?window_hours=${windowHours}`).then((raw) => ({
+      overall_status: raw.overall_status === "pass" ? "met" : "miss",
+      items: (raw.checks ?? []).map((item) => ({
+        metric: item.name,
+        current: item.current,
+        target: item.target,
+        met: item.status === "pass",
+      })),
+    }));
   },
   retrievalQuality(windowHours = 24) {
-    return request<RetrievalQualityData>("GET", `/api/ops/retrieval/quality?window_hours=${windowHours}`);
+    return request<{
+      window_hours: number;
+      zero_hit_rate: number;
+      citation_coverage_rate: number;
+      avg_latency_ms?: number | null;
+      p95_latency_ms?: number | null;
+      query_total: number;
+    }>("GET", `/api/ops/retrieval/quality?window_hours=${windowHours}`).then((raw) => ({
+      window_hours: raw.window_hours,
+      zero_hit_rate: raw.zero_hit_rate,
+      citation_coverage_rate: raw.citation_coverage_rate,
+      latency_p50_ms: raw.avg_latency_ms ?? 0,
+      latency_p95_ms: raw.p95_latency_ms ?? 0,
+      latency_p99_ms: raw.p95_latency_ms ?? 0,
+      total_queries: raw.query_total,
+    }));
   },
   tenantHealth(windowHours = 24) {
     return request<Array<Record<string, unknown>>>("GET", `/api/ops/tenant-health?window_hours=${windowHours}`);
@@ -709,13 +1014,32 @@ export const opsApi = {
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     const q = qs.toString();
-    return request<IncidentTicketData[]>("GET", `/api/ops/incidents/tickets${q ? `?${q}` : ""}`);
+    return request<IncidentTicketRawData[]>("GET", `/api/ops/incidents/tickets${q ? `?${q}` : ""}`).then((items) =>
+      items.map(mapIncidentTicket),
+    );
   },
-  createTicket(data: { title: string; severity: string; description?: string }) {
-    return request<IncidentTicketData>("POST", "/api/ops/incidents/tickets", data);
+  createTicket(data: { title: string; severity: string; description?: string; source_code?: string }) {
+    const severityMap: Record<string, string> = {
+      high: "critical",
+      medium: "warn",
+      low: "info",
+    };
+    const normalizedSeverity = severityMap[data.severity] ?? data.severity;
+    return request<IncidentTicketRawData>("POST", "/api/ops/incidents/tickets", {
+      source_code: data.source_code ?? "manual",
+      severity: normalizedSeverity,
+      title: data.title,
+      summary: data.description || data.title,
+      diagnosis: {},
+      context: {},
+    }).then(mapIncidentTicket);
   },
   updateTicket(ticketId: string, data: { status?: string; assignee?: string; resolution?: string }) {
-    return request<IncidentTicketData>("PATCH", `/api/ops/incidents/tickets/${ticketId}`, data);
+    return request<IncidentTicketRawData>("PATCH", `/api/ops/incidents/tickets/${ticketId}`, {
+      status: data.status,
+      assignee_user_id: data.assignee,
+      resolution_note: data.resolution,
+    }).then(mapIncidentTicket);
   },
   diagnosis(windowHours = 24) {
     return request<Array<Record<string, unknown>>>("GET", `/api/ops/incidents/diagnosis?window_hours=${windowHours}`);
@@ -734,12 +1058,42 @@ export const opsApi = {
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     const q = qs.toString();
-    return request<ReleaseRolloutData[]>("GET", `/api/ops/release/rollouts${q ? `?${q}` : ""}`);
+    return request<ReleaseRolloutRawData[]>("GET", `/api/ops/release/rollouts${q ? `?${q}` : ""}`).then((items) =>
+      items.map(mapReleaseRollout),
+    );
   },
   createRollout(data: { version: string; description?: string }) {
-    return request<ReleaseRolloutData>("POST", "/api/ops/release/rollouts", data);
+    return request<ReleaseRolloutRawData>("POST", "/api/ops/release/rollouts", {
+      version: data.version,
+      note: data.description,
+    }).then(mapReleaseRollout);
   },
   rollback(rolloutId: string, reason: string) {
-    return request<ReleaseRolloutData>("POST", `/api/ops/release/rollouts/${rolloutId}/rollback`, { reason });
+    return request<ReleaseRolloutRawData>("POST", `/api/ops/release/rollouts/${rolloutId}/rollback`, { reason }).then(mapReleaseRollout);
+  },
+  listDeletionProofs(params?: { resource_type?: string; limit?: number; offset?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.resource_type) qs.set("resource_type", params.resource_type);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<Array<{
+      proof_id: string;
+      resource_type: string;
+      resource_id: string;
+      deleted_at: string;
+      deleted_by?: string | null;
+      proof_payload?: Record<string, unknown>;
+      [key: string]: unknown;
+    }>>("GET", `/api/ops/compliance/deletion-proofs${q ? `?${q}` : ""}`).then((items) =>
+      items.map((item) => ({
+        proof_id: item.proof_id,
+        deleted_at: item.deleted_at,
+        executed_by: item.deleted_by ?? "",
+        resource_type: item.resource_type,
+        resource_id: item.resource_id,
+        details: item.proof_payload,
+      })),
+    );
   },
 };

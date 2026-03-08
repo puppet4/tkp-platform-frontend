@@ -1,11 +1,39 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { permissionsApi } from "@/lib/api";
+import {
+  agentApi,
+  chatApi,
+  documentApi,
+  feedbackApi,
+  governanceApi,
+  opsApi,
+  permissionsApi,
+  usersApi,
+} from "@/lib/api";
 
 describe("api client base url", () => {
+  const makeStorage = () => {
+    const data: Record<string, string> = {};
+    return {
+      getItem: (key: string) => (key in data ? data[key] : null),
+      setItem: (key: string, value: string) => {
+        data[key] = value;
+      },
+      removeItem: (key: string) => {
+        delete data[key];
+      },
+      clear: () => {
+        Object.keys(data).forEach((key) => delete data[key]);
+      },
+    };
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", makeStorage());
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
-    localStorage.clear();
   });
 
   it("uses same-origin /api path by default in development", async () => {
@@ -26,5 +54,245 @@ describe("api client base url", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/permissions/me");
+  });
+
+  it("adapts chat conversations from wrapped payload object", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-chat-list",
+          data: {
+            conversations: [
+              {
+                conversation_id: "conv-1",
+                title: "会话 A",
+                created_at: "2026-03-08T00:00:00Z",
+                updated_at: "2026-03-08T00:00:00Z",
+              },
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const list = await chatApi.listConversations();
+    expect(Array.isArray(list)).toBe(true);
+    expect(list[0]?.id).toBe("conv-1");
+  });
+
+  it("adapts chat messages from wrapped payload object", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-chat-msg",
+          data: {
+            conversation_id: "conv-1",
+            messages: [
+              {
+                message_id: "msg-1",
+                role: "assistant",
+                content: "你好",
+                created_at: "2026-03-08T00:00:00Z",
+              },
+            ],
+            total: 1,
+            limit: 100,
+            offset: 0,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const list = await chatApi.listMessages("conv-1");
+    expect(Array.isArray(list)).toBe(true);
+    expect(list[0]?.id).toBe("msg-1");
+  });
+
+  it("adapts feedback list from wrapped payload object", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-feedback",
+          data: {
+            feedbacks: [
+              {
+                feedback_id: "fb-1",
+                feedback_type: "thumbs_up",
+                processed: false,
+                created_at: "2026-03-08T00:00:00Z",
+              },
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const list = await feedbackApi.list();
+    expect(Array.isArray(list)).toBe(true);
+    expect(list[0]?.id).toBe("fb-1");
+  });
+
+  it("supports governance raw JSON response without data envelope", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "dr-1",
+          status: "pending",
+          requested_at: "2026-03-08T00:00:00Z",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const res = await governanceApi.createDeletionRequest("document", "doc-1", "reason");
+    expect((res as { request_id?: string }).request_id).toBe("dr-1");
+  });
+
+  it("maps create ticket payload to backend schema", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-ticket",
+          data: {
+            ticket_id: "t-1",
+            title: "异常",
+            severity: "warn",
+            status: "open",
+            created_at: "2026-03-08T00:00:00Z",
+            updated_at: "2026-03-08T00:00:00Z",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await opsApi.createTicket({ title: "异常", severity: "warn", description: "摘要内容" });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? "{}"));
+
+    expect(body.source_code).toBeTypeOf("string");
+    expect(body.summary).toBe("摘要内容");
+  });
+
+  it("maps document chunks pagination params and response shape", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-chunks",
+          data: {
+            document_id: "doc-1",
+            version: 3,
+            document_version_id: "dv-1",
+            total: 21,
+            offset: 20,
+            limit: 20,
+            items: [
+              {
+                id: "chunk-21",
+                document_id: "doc-1",
+                document_version_id: "dv-1",
+                chunk_no: 21,
+                content: "content",
+                token_count: 12,
+                created_at: "2026-03-08T00:00:00Z",
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const page = await documentApi.listChunks("doc-1", 2, 20);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("offset=20");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("limit=20");
+    expect(page.page).toBe(2);
+    expect(page.items[0]?.chunk_id).toBe("chunk-21");
+  });
+
+  it("supports listing agent runs", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-agent-list",
+          data: [{ run_id: "run-1", status: "queued" }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const runs = await agentApi.list({ limit: 10 });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/agent/runs?limit=10");
+    expect(runs[0]?.run_id).toBe("run-1");
+  });
+
+  it("supports listing governance deletion requests", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          requests: [{ request_id: "dr-1", status: "pending", requested_at: "2026-03-08T00:00:00Z" }],
+          total: 1,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const reqs = await governanceApi.listDeletionRequests({ limit: 20 });
+    expect(reqs.length).toBe(1);
+    expect(reqs[0]?.request_id).toBe("dr-1");
+  });
+
+  it("supports user preferences read/write", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-pref-get",
+            data: {
+              theme: "dark",
+              language: "zh-CN",
+              timezone: "Asia/Shanghai",
+              notifications: { email: true, browser: true, alerts: true },
+              security: { password_reset_email: true, two_factor_enabled: false },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-pref-put",
+            data: {
+              theme: "light",
+              language: "en",
+              timezone: "UTC",
+              notifications: { email: false, browser: true, alerts: true },
+              security: { password_reset_email: false, two_factor_enabled: true },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const pref = await usersApi.getPreferences("u-1");
+    expect(pref.theme).toBe("dark");
+    await usersApi.upsertPreferences("u-1", {
+      theme: "light",
+      language: "en",
+      timezone: "UTC",
+      notifications: { email: false, browser: true, alerts: true },
+      security: { password_reset_email: false, two_factor_enabled: true },
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/users/u-1/preferences");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/users/u-1/preferences");
   });
 });

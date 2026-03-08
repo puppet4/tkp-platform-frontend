@@ -87,6 +87,60 @@ describe("api client base url", () => {
     expect(list[0]?.id).toBe("conv-1");
   });
 
+  it("adapts chat conversation kb scope when backend returns object payload", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-chat-list-kb-scope",
+          data: {
+            conversations: [
+              {
+                conversation_id: "conv-2",
+                title: "会话 B",
+                kb_scope: {
+                  kb_ids: ["kb-1", "kb-2"],
+                },
+                created_at: "2026-03-08T00:00:00Z",
+                updated_at: "2026-03-08T00:00:00Z",
+              },
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const list = await chatApi.listConversations();
+    expect(list[0]?.kb_ids).toEqual(["kb-1", "kb-2"]);
+  });
+
+  it("adapts chat conversation detail kb scope when backend returns object payload", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: "req-chat-detail-kb-scope",
+          data: {
+            conversation_id: "conv-3",
+            title: "会话 C",
+            message_count: 2,
+            kb_scope: {
+              kb_ids: ["kb-9"],
+            },
+            created_at: "2026-03-08T00:00:00Z",
+            updated_at: "2026-03-08T00:00:00Z",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const detail = await chatApi.getConversation("conv-3");
+    expect(detail.kb_ids).toEqual(["kb-9"]);
+  });
+
   it("adapts chat messages from wrapped payload object", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

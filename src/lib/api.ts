@@ -179,6 +179,40 @@ export interface TenantRolePermissionData {
   permission_codes: string[];
 }
 
+export interface PermissionPolicyCenterData {
+  template_version: string;
+  catalog: string[];
+  role_permissions: TenantRolePermissionData[];
+  ui_manifest: PermissionUIManifestData;
+}
+
+export interface PermissionTemplateData {
+  template_key: string;
+  version: string;
+  catalog: string[];
+  role_permissions: TenantRolePermissionData[];
+}
+
+export interface PermissionTemplatePublishData {
+  template_key: string;
+  version: string;
+  overwrite_existing: boolean;
+  role_permissions: TenantRolePermissionData[];
+}
+
+export interface PermissionPolicySnapshotData {
+  snapshot_id: string;
+  template_version: string;
+  role_permissions: TenantRolePermissionData[];
+  note?: string | null;
+  created_at: string;
+}
+
+export interface PermissionPolicyRollbackData {
+  snapshot_id: string;
+  role_permissions: TenantRolePermissionData[];
+}
+
 // ─── Auth API ────────────────────────────────────────────────────
 export const authApi = {
   login(email: string, password: string) {
@@ -246,6 +280,20 @@ export const permissionsApi = {
     );
   },
 
+  policyCenter() {
+    return request<PermissionPolicyCenterData>("GET", "/api/permissions/policy-center");
+  },
+
+  defaultTemplate() {
+    return request<PermissionTemplateData>("GET", "/api/permissions/templates/default");
+  },
+
+  publishDefaultTemplate(overwriteExisting = false) {
+    return request<PermissionTemplatePublishData>("POST", "/api/permissions/templates/default/publish", {
+      overwrite_existing: overwriteExisting,
+    });
+  },
+
   listRoles() {
     return request<TenantRolePermissionData[]>("GET", "/api/permissions/roles");
   },
@@ -262,6 +310,26 @@ export const permissionsApi = {
     return request<TenantRolePermissionData>(
       "DELETE",
       `/api/permissions/roles/${encodeURIComponent(role)}`,
+    );
+  },
+
+  createPolicySnapshot(note?: string) {
+    return request<PermissionPolicySnapshotData>("POST", "/api/permissions/policies/snapshots", {
+      note,
+    });
+  },
+
+  listPolicySnapshots(limit = 20, windowDays = 90) {
+    return request<PermissionPolicySnapshotData[]>(
+      "GET",
+      `/api/permissions/policies/snapshots?limit=${limit}&window_days=${windowDays}`,
+    );
+  },
+
+  rollbackPolicySnapshot(snapshotId: string) {
+    return request<PermissionPolicyRollbackData>(
+      "POST",
+      `/api/permissions/policies/snapshots/${encodeURIComponent(snapshotId)}/rollback`,
     );
   },
 };
@@ -319,6 +387,9 @@ export const usersApi = {
   update(userId: string, data: { display_name?: string; status?: string }) {
     return request<TenantUserData>("PATCH", `/api/users/${userId}`, data);
   },
+  remove(userId: string) {
+    return request<TenantUserData>("DELETE", `/api/users/${userId}`);
+  },
   getPreferences(userId: string) {
     return request<UserPreferencesData>("GET", `/api/users/${userId}/preferences`);
   },
@@ -331,11 +402,23 @@ export const tenantApi = {
   list() {
     return request<TenantData[]>("GET", "/api/tenants");
   },
+  create(data: { name: string; slug: string }) {
+    return request<{
+      tenant_id: string;
+      name: string;
+      slug: string;
+      role: string;
+      default_workspace_id: string;
+    }>("POST", "/api/tenants", data);
+  },
   get(tenantId: string) {
     return request<TenantData>("GET", `/api/tenants/${tenantId}`);
   },
   update(tenantId: string, data: { name?: string; slug?: string; status?: string }) {
     return request<TenantData>("PATCH", `/api/tenants/${tenantId}`, data);
+  },
+  delete(tenantId: string) {
+    return request<TenantData>("DELETE", `/api/tenants/${tenantId}`);
   },
   listInvitations() {
     return request<TenantData[]>("GET", "/api/tenants/invitations");
@@ -456,6 +539,36 @@ export interface DocumentUploadData {
   status: string;
 }
 
+export interface IngestionJobDiagnosisData {
+  category: string;
+  summary: string;
+  suggestion: string;
+}
+
+export interface IngestionJobData {
+  job_id: string;
+  workspace_id: string;
+  document_id: string;
+  document_version_id: string;
+  status: string;
+  stage: string;
+  progress: number;
+  attempt_count: number;
+  max_attempts: number;
+  next_run_at: string | null;
+  locked_at?: string | null;
+  locked_by?: string | null;
+  heartbeat_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  terminal: boolean;
+  retryable: boolean;
+  can_retry_now: boolean;
+  retry_in_seconds: number;
+  diagnosis: IngestionJobDiagnosisData;
+}
+
 // ─── Workspace API ───────────────────────────────────────────────
 export const workspaceApi = {
   list() {
@@ -544,6 +657,22 @@ export const documentApi = {
   },
   reindex(docId: string) {
     return request<{ job_id: string; status: string }>("POST", `/api/documents/${docId}/reindex`);
+  },
+  getIngestionJob(jobId: string) {
+    return request<IngestionJobData>("GET", `/api/documents/ingestion-jobs/${encodeURIComponent(jobId)}`);
+  },
+  retryIngestionJob(jobId: string) {
+    return request<IngestionJobData>(
+      "POST",
+      `/api/documents/ingestion-jobs/${encodeURIComponent(jobId)}/retry`,
+    );
+  },
+  deadLetterIngestionJob(jobId: string, reason?: string) {
+    return request<IngestionJobData>(
+      "POST",
+      `/api/documents/ingestion-jobs/${encodeURIComponent(jobId)}/dead-letter`,
+      { reason },
+    );
   },
   listVersions(docId: string) {
     return request<
@@ -660,6 +789,29 @@ export interface ChatCompletionResult {
   conversation_id: string;
 }
 
+type ConversationKbScope =
+  | string[]
+  | {
+      kb_ids?: string[] | null;
+    }
+  | null
+  | undefined;
+
+function normalizeConversationKbScope(scope: ConversationKbScope): string[] | undefined {
+  if (Array.isArray(scope)) {
+    return scope.filter((id): id is string => typeof id === "string");
+  }
+
+  if (scope && typeof scope === "object" && "kb_ids" in scope) {
+    const kbIds = scope.kb_ids;
+    if (Array.isArray(kbIds)) {
+      return kbIds.filter((id): id is string => typeof id === "string");
+    }
+  }
+
+  return undefined;
+}
+
 // ─── Chat API ────────────────────────────────────────────────────
 export const chatApi = {
   listConversations(limit = 50, offset = 0) {
@@ -667,7 +819,7 @@ export const chatApi = {
       conversations: Array<{
         conversation_id: string;
         title: string;
-        kb_scope?: string[] | null;
+        kb_scope?: ConversationKbScope;
         created_at: string;
         updated_at: string;
       }>;
@@ -676,7 +828,7 @@ export const chatApi = {
         id: item.conversation_id,
         title: item.title,
         message_count: 0,
-        kb_ids: item.kb_scope ?? undefined,
+        kb_ids: normalizeConversationKbScope(item.kb_scope),
         created_at: item.created_at,
         updated_at: item.updated_at,
       })),
@@ -687,14 +839,14 @@ export const chatApi = {
       conversation_id: string;
       title: string;
       message_count: number;
-      kb_scope?: string[] | null;
+      kb_scope?: ConversationKbScope;
       created_at: string;
       updated_at: string;
     }>("GET", `/api/chat/conversations/${id}`).then((item) => ({
       id: item.conversation_id,
       title: item.title,
       message_count: item.message_count,
-      kb_ids: item.kb_scope ?? undefined,
+      kb_ids: normalizeConversationKbScope(item.kb_scope),
       created_at: item.created_at,
       updated_at: item.updated_at,
     }));

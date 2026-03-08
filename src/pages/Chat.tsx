@@ -39,6 +39,7 @@ const Chat = () => {
   const [streamText, setStreamText] = useState("");
   const [showNewConv, setShowNewConv] = useState(false);
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
+  const [isDraftConversation, setIsDraftConversation] = useState(false);
   const [showMobileList, setShowMobileList] = useState(false);
   const [showRenameConv, setShowRenameConv] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
@@ -83,10 +84,10 @@ const Chat = () => {
 
   // Auto-select first conversation
   useEffect(() => {
-    if (!selectedConvId && conversations.length > 0) {
+    if (!selectedConvId && !isDraftConversation && conversations.length > 0) {
       setSelectedConvId(conversations[0].id);
     }
-  }, [conversations, selectedConvId]);
+  }, [conversations, isDraftConversation, selectedConvId]);
 
   const selectedConv = conversations.find((c) => c.id === selectedConvId);
   const selectedConvView = convDetail || selectedConv;
@@ -99,6 +100,7 @@ const Chat = () => {
       if (selectedConvId === id) {
         setSelectedConvId(null);
         setMessages([]);
+        setIsDraftConversation(false);
       }
       toast.success("会话已删除");
     },
@@ -157,12 +159,13 @@ const Chat = () => {
       const result: ChatCompletionResult = await chatApi.completions({
         conversation_id: selectedConvId || undefined,
         messages: historyMsgs,
-        kb_ids: selectedKbs.length > 0 ? selectedKbs : undefined,
+        kb_ids: selectedConvId ? undefined : selectedKbs.length > 0 ? selectedKbs : undefined,
       });
 
       // If this was a new conversation, update the selected conv ID
       if (!selectedConvId && result.conversation_id) {
         setSelectedConvId(result.conversation_id);
+        setIsDraftConversation(false);
         qc.invalidateQueries({ queryKey: ["conversations"] });
       }
 
@@ -191,6 +194,7 @@ const Chat = () => {
     if (selectedKbs.length === 0) return;
     // Don't create on server yet; will be created on first message via completions
     setSelectedConvId(null);
+    setIsDraftConversation(true);
     setMessages([]);
     setShowNewConv(false);
     setShowMobileList(false);
@@ -225,6 +229,7 @@ const Chat = () => {
               }`}
               onClick={() => {
                 setSelectedConvId(conv.id);
+                setIsDraftConversation(false);
                 setShowMobileList(false);
               }}
             >

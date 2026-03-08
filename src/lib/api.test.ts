@@ -6,6 +6,7 @@ import {
   documentApi,
   feedbackApi,
   governanceApi,
+  kbApi,
   opsApi,
   permissionsApi,
   usersApi,
@@ -294,5 +295,90 @@ describe("api client base url", () => {
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/users/u-1/preferences");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/users/u-1/preferences");
+  });
+
+  it("supports kb members list/upsert/remove", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-kb-members-list",
+            data: [
+              { kb_id: "kb-1", user_id: "u-1", role: "owner", status: "active" },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-kb-member-upsert",
+            data: { kb_id: "kb-1", user_id: "u-2", role: "editor", status: "active" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-kb-member-remove",
+            data: { kb_id: "kb-1", user_id: "u-2", role: "editor", status: "disabled" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const members = await kbApi.listMembers("kb-1");
+    expect(members[0]?.user_id).toBe("u-1");
+
+    await kbApi.upsertMember("kb-1", "u-2", "editor");
+    const upsertReq = fetchMock.mock.calls[1];
+    expect(upsertReq?.[0]).toBe("/api/knowledge-bases/kb-1/members/u-2");
+    expect(upsertReq?.[1]?.method).toBe("PUT");
+    expect(JSON.parse(String(upsertReq?.[1]?.body ?? "{}"))).toEqual({ role: "editor" });
+
+    await kbApi.removeMember("kb-1", "u-2");
+    const removeReq = fetchMock.mock.calls[2];
+    expect(removeReq?.[0]).toBe("/api/knowledge-bases/kb-1/members/u-2");
+    expect(removeReq?.[1]?.method).toBe("DELETE");
+  });
+
+  it("supports permissions role matrix list and update", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-role-list",
+            data: [
+              { role: "owner", permission_codes: ["tenant.read", "workspace.member.manage"] },
+              { role: "viewer", permission_codes: ["tenant.read"] },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-role-update",
+            data: { role: "viewer", permission_codes: ["tenant.read", "chat.completion"] },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const roles = await permissionsApi.listRoles();
+    expect(roles.length).toBe(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/permissions/roles");
+
+    await permissionsApi.updateRole("viewer", ["tenant.read", "chat.completion"]);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/permissions/roles/viewer");
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("PUT");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body ?? "{}"))).toEqual({
+      permission_codes: ["tenant.read", "chat.completion"],
+    });
   });
 });

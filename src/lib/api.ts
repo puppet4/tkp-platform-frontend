@@ -161,6 +161,11 @@ export interface PermissionUIManifestData {
   features: PermissionUIItemData[];
 }
 
+export interface TenantRolePermissionData {
+  role: string;
+  permission_codes: string[];
+}
+
 // ─── Auth API ────────────────────────────────────────────────────
 export const authApi = {
   login(email: string, password: string) {
@@ -197,6 +202,31 @@ export const permissionsApi = {
 
   uiManifest() {
     return request<PermissionUIManifestData>("GET", "/api/permissions/ui-manifest");
+  },
+
+  catalog() {
+    return request<{ permission_codes: string[] }>("GET", "/api/permissions/catalog").then(
+      (res) => res.permission_codes ?? [],
+    );
+  },
+
+  listRoles() {
+    return request<TenantRolePermissionData[]>("GET", "/api/permissions/roles");
+  },
+
+  updateRole(role: string, permissionCodes: string[]) {
+    return request<TenantRolePermissionData>(
+      "PUT",
+      `/api/permissions/roles/${encodeURIComponent(role)}`,
+      { permission_codes: permissionCodes },
+    );
+  },
+
+  resetRole(role: string) {
+    return request<TenantRolePermissionData>(
+      "DELETE",
+      `/api/permissions/roles/${encodeURIComponent(role)}`,
+    );
   },
 };
 
@@ -284,6 +314,13 @@ export interface KnowledgeBaseStatsData {
   job_total: number;
   job_queued: number;
   job_processing: number;
+}
+
+export interface KBMemberData {
+  kb_id: string;
+  user_id: string;
+  role: string;
+  status: string;
 }
 
 // ─── Document types ──────────────────────────────────────────────
@@ -378,6 +415,22 @@ export const kbApi = {
   },
   delete(kbId: string) {
     return request<KnowledgeBaseData>("DELETE", `/api/knowledge-bases/${kbId}`);
+  },
+  listMembers(kbId: string) {
+    return request<KBMemberData[]>("GET", `/api/knowledge-bases/${kbId}/members`);
+  },
+  upsertMember(kbId: string, userId: string, role: string) {
+    return request<KBMemberData>(
+      "PUT",
+      `/api/knowledge-bases/${kbId}/members/${encodeURIComponent(userId)}`,
+      { role },
+    );
+  },
+  removeMember(kbId: string, userId: string) {
+    return request<KBMemberData>(
+      "DELETE",
+      `/api/knowledge-bases/${kbId}/members/${encodeURIComponent(userId)}`,
+    );
   },
 };
 
@@ -1018,7 +1071,14 @@ export const opsApi = {
       items.map(mapIncidentTicket),
     );
   },
-  createTicket(data: { title: string; severity: string; description?: string; source_code?: string }) {
+  createTicket(data: {
+    title: string;
+    severity: string;
+    description?: string;
+    source_code?: string;
+    diagnosis?: Record<string, unknown>;
+    context?: Record<string, unknown>;
+  }) {
     const severityMap: Record<string, string> = {
       high: "critical",
       medium: "warn",
@@ -1030,8 +1090,8 @@ export const opsApi = {
       severity: normalizedSeverity,
       title: data.title,
       summary: data.description || data.title,
-      diagnosis: {},
-      context: {},
+      diagnosis: data.diagnosis ?? {},
+      context: data.context ?? {},
     }).then(mapIncidentTicket);
   },
   updateTicket(ticketId: string, data: { status?: string; assignee?: string; resolution?: string }) {
@@ -1062,9 +1122,20 @@ export const opsApi = {
       items.map(mapReleaseRollout),
     );
   },
-  createRollout(data: { version: string; description?: string }) {
+  createRollout(data: {
+    version: string;
+    description?: string;
+    strategy?: string;
+    risk_level?: string;
+    canary_percent?: number;
+    scope?: Record<string, unknown>;
+  }) {
     return request<ReleaseRolloutRawData>("POST", "/api/ops/release/rollouts", {
       version: data.version,
+      strategy: data.strategy ?? "canary",
+      risk_level: data.risk_level ?? "medium",
+      canary_percent: data.canary_percent ?? 10,
+      scope: data.scope ?? {},
       note: data.description,
     }).then(mapReleaseRollout);
   },

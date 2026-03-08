@@ -1,9 +1,16 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
-import { governanceApi, opsApi, type DeletionProofData, type DeletionRequestData } from "@/lib/api";
+import {
+  governanceApi,
+  opsApi,
+  permissionsApi,
+  type DeletionProofData,
+  type DeletionRequestData,
+  type TenantRolePermissionData,
+} from "@/lib/api";
 import {
   Shield, Trash2, Key, CheckCircle, XCircle, Play,
-  FileCheck, Lock, Unlock, Loader2
+  FileCheck, AlertTriangle, Loader2, RotateCcw
 } from "lucide-react";
 import { FormDialog, FormField, FormInput, FormTextarea, FormSelect, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
@@ -17,19 +24,91 @@ const Governance = () => {
   const qc = useQueryClient();
   const { uiManifest } = useAuth();
   const [tab, setTab] = useState<Tab>("permissions");
+
   const [showDeleteReq, setShowDeleteReq] = useState(false);
   const [showConfirm, setShowConfirm] = useState<{ type: "approve" | "reject" | "execute"; id: string } | null>(null);
   const [showProof, setShowProof] = useState<string | null>(null);
   const [proofData, setProofData] = useState<DeletionProofData | null>(null);
+
   const [formTarget, setFormTarget] = useState("");
   const [formReason, setFormReason] = useState("");
   const [formTargetType, setFormTargetType] = useState("document");
   const [rejectReason, setRejectReason] = useState("");
 
+  const [selectedRole, setSelectedRole] = useState("");
+  const [editingPermissionCodes, setEditingPermissionCodes] = useState<string[]>([]);
+  const [permissionFilter, setPermissionFilter] = useState("");
+
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: "permissions", label: "权限中心", icon: Key },
     { id: "deletion", label: "删除治理", icon: Trash2 },
   ];
+
+  // Permission center queries
+  const { data: permissionCatalog = [], isLoading: catalogLoading } = useQuery({
+    queryKey: ["permission-catalog"],
+    queryFn: () => permissionsApi.catalog(),
+    enabled: tab === "permissions",
+  });
+
+  const { data: rolePermissions = [], isLoading: rolesLoading } = useQuery({
+    queryKey: ["permission-roles"],
+    queryFn: () => permissionsApi.listRoles(),
+    enabled: tab === "permissions",
+    retry: false,
+  });
+
+  const { data: runtimeManifest, refetch: refetchRuntimeManifest } = useQuery({
+    queryKey: ["permission-ui-manifest-runtime"],
+    queryFn: () => permissionsApi.uiManifest(),
+    enabled: tab === "permissions",
+  });
+
+  const selectedRoleData = useMemo(
+    () => rolePermissions.find((r) => r.role === selectedRole),
+    [rolePermissions, selectedRole],
+  );
+
+  useEffect(() => {
+    if (!rolePermissions.length) return;
+    if (!selectedRole) {
+      setSelectedRole(rolePermissions[0].role);
+      setEditingPermissionCodes(rolePermissions[0].permission_codes || []);
+      return;
+    }
+    const current = rolePermissions.find((r) => r.role === selectedRole);
+    if (current) {
+      setEditingPermissionCodes(current.permission_codes || []);
+    }
+  }, [rolePermissions, selectedRole]);
+
+  const filteredCatalog = useMemo(() => {
+    const q = permissionFilter.trim().toLowerCase();
+    if (!q) return permissionCatalog;
+    return permissionCatalog.filter((code) => code.toLowerCase().includes(q));
+  }, [permissionCatalog, permissionFilter]);
+
+  const updateRoleMutation = useMutation({
+    mutationFn: (payload: { role: string; permissionCodes: string[] }) =>
+      permissionsApi.updateRole(payload.role, payload.permissionCodes),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["permission-roles"] });
+      await refetchRuntimeManifest();
+      toast.success("角色权限已更新");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const resetRoleMutation = useMutation({
+    mutationFn: (role: string) => permissionsApi.resetRole(role),
+    onSuccess: async (data) => {
+      setEditingPermissionCodes(data.permission_codes || []);
+      await qc.invalidateQueries({ queryKey: ["permission-roles"] });
+      await refetchRuntimeManifest();
+      toast.success("角色权限已重置为默认值");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const createDeletionMutation = useMutation({
     mutationFn: () => governanceApi.createDeletionRequest(formTargetType, formTarget, formReason),
@@ -99,6 +178,12 @@ const Governance = () => {
     retry: false,
   });
 
+  const togglePermissionCode = (code: string) => {
+    setEditingPermissionCodes((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
+    );
+  };
+
   return (
     <AppLayout>
       <div className="p-4 md:p-6 max-w-6xl mx-auto w-full">
@@ -107,57 +192,106 @@ const Governance = () => {
 
         <PageTabs tabs={tabs} activeTab={tab} onTabChange={(id) => setTab(id as Tab)} />
 
-        {/* Permissions - based on real uiManifest */}
+        {/* Permissions */}
         {tab === "permissions" && (
           <div className="space-y-4">
-            {uiManifest ? (
-              <>
-                <div className="bg-card rounded-lg border border-border p-5 shadow-xs">
-                  <h3 className="text-sm font-semibold text-foreground mb-1">当前角色</h3>
-                  <p className="text-lg font-bold text-primary">{uiManifest.tenant_role}</p>
-                  <p className="text-[11px] text-muted-foreground mt-1">版本: {uiManifest.version}</p>
-                </div>
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs">
+              <h3 className="text-sm font-semibold text-foreground mb-1">运行时权限视图</h3>
+              <div className="text-[12px] text-muted-foreground">
+                当前角色：
+                <span className="ml-1 text-foreground font-semibold">{runtimeManifest?.tenant_role || uiManifest?.tenant_role || "-"}</span>
+                <span className="ml-3">版本：{runtimeManifest?.version || uiManifest?.version || "-"}</span>
+              </div>
+              <div className="mt-2 text-[12px] text-muted-foreground">
+                允许动作数：{runtimeManifest?.allowed_actions.length ?? uiManifest?.allowed_actions.length ?? 0}
+              </div>
+            </div>
 
-                <div className="bg-card rounded-lg border border-border p-5 shadow-xs">
-                  <h3 className="text-sm font-semibold text-foreground mb-3">允许的操作 ({uiManifest.allowed_actions.length})</h3>
-                  <div className="flex flex-wrap gap-1.5">
-                    {uiManifest.allowed_actions.map(action => (
-                      <span key={action} className="text-[11px] px-2 py-0.5 rounded-full bg-success/10 text-success font-mono">{action}</span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-3 gap-4">
-                  {[
-                    { title: "菜单", items: uiManifest.menus },
-                    { title: "按钮", items: uiManifest.buttons },
-                    { title: "功能", items: uiManifest.features },
-                  ].map(section => (
-                    <div key={section.title} className="bg-card rounded-lg border border-border p-5 shadow-xs">
-                      <h4 className="text-[11px] font-medium text-muted-foreground uppercase mb-2">{section.title}</h4>
-                      <div className="space-y-1.5">
-                        {section.items.map(item => (
-                          <div key={item.code} className="flex items-center justify-between px-3 py-1.5 rounded-md border border-border">
-                            <div>
-                              <span className="text-sm text-foreground">{item.name}</span>
-                              <div className="text-[10px] text-muted-foreground font-mono">{item.code}</div>
-                            </div>
-                            {item.allowed ? (
-                              <Unlock className="h-3.5 w-3.5 text-success" />
-                            ) : (
-                              <Lock className="h-3.5 w-3.5 text-muted-foreground/30" />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
+            {rolesLoading || catalogLoading ? (
               <div className="flex items-center justify-center py-16 gap-2">
                 <Loader2 className="h-5 w-5 text-primary animate-spin" />
-                <span className="text-sm text-muted-foreground">加载权限信息...</span>
+                <span className="text-sm text-muted-foreground">加载权限配置...</span>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-[220px_1fr] gap-4">
+                <div className="bg-card rounded-lg border border-border p-3 shadow-xs space-y-2 h-fit">
+                  <div className="text-[12px] text-muted-foreground px-1">角色列表</div>
+                  {rolePermissions.map((rp: TenantRolePermissionData) => (
+                    <button
+                      key={rp.role}
+                      onClick={() => setSelectedRole(rp.role)}
+                      className={`w-full text-left px-3 py-2 rounded-md border transition-colors ${
+                        selectedRole === rp.role
+                          ? "border-primary bg-primary/5 text-primary"
+                          : "border-border hover:bg-secondary/40"
+                      }`}
+                    >
+                      <div className="text-sm font-medium">{rp.role}</div>
+                      <div className="text-[11px] text-muted-foreground">{rp.permission_codes.length} 项权限</div>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="bg-card rounded-lg border border-border p-4 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">角色权限编辑 · {selectedRole || "-"}</h3>
+                      <p className="text-[11px] text-muted-foreground">勾选权限后保存，立即写入租户角色权限矩阵</p>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">已选 {editingPermissionCodes.length} 项</div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={permissionFilter}
+                      onChange={(e) => setPermissionFilter(e.target.value)}
+                      placeholder="搜索权限码..."
+                      className="h-8 rounded-md border border-input bg-card px-3 text-sm flex-1"
+                    />
+                    <button
+                      onClick={() => refetchRuntimeManifest()}
+                      className="text-[12px] px-2.5 py-1.5 rounded-md border border-border hover:bg-secondary"
+                    >
+                      刷新运行态
+                    </button>
+                  </div>
+
+                  <div className="border border-border rounded-lg p-3 max-h-[380px] overflow-auto">
+                    <div className="grid md:grid-cols-2 gap-2">
+                      {filteredCatalog.map((code) => (
+                        <label key={code} className="flex items-center gap-2 p-2 rounded border border-border hover:bg-secondary/30 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editingPermissionCodes.includes(code)}
+                            onChange={() => togglePermissionCode(code)}
+                          />
+                          <span className="text-[12px] font-mono text-foreground break-all">{code}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {filteredCatalog.length === 0 && (
+                      <div className="text-center py-8 text-sm text-muted-foreground">无匹配权限码</div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => selectedRole && resetRoleMutation.mutate(selectedRole)}
+                      disabled={!selectedRole || resetRoleMutation.isPending}
+                      className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 inline mr-1" />
+                      重置默认
+                    </button>
+                    <button
+                      onClick={() => selectedRole && updateRoleMutation.mutate({ role: selectedRole, permissionCodes: editingPermissionCodes })}
+                      disabled={!selectedRole || updateRoleMutation.isPending}
+                      className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                    >
+                      {updateRoleMutation.isPending ? "保存中..." : "保存权限"}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>

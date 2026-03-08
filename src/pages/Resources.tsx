@@ -10,6 +10,7 @@ import { FormDialog, FormField, FormInput, FormTextarea, DialogButton, FormSelec
 import { useToast } from "@/hooks/use-toast";
 import { EmptyState } from "@/components/UniversalStates";
 import { LoadingSkeleton } from "@/components/UniversalStates";
+import { useRoleAccess } from "@/hooks/useRoleAccess";
 import {
   useWorkspaces, useCreateWorkspace,
   useKnowledgeBases, useKbStats, useCreateKb, useDeleteKb,
@@ -41,6 +42,7 @@ type View = "workspaces" | "kb-list" | "doc-list" | "doc-detail";
 
 const Resources = () => {
   const { toast } = useToast();
+  const { canAction } = useRoleAccess();
   const [view, setView] = useState<View>("workspaces");
   const [selectedWs, setSelectedWs] = useState<WorkspaceData | null>(null);
   const [selectedKb, setSelectedKb] = useState<KnowledgeBaseData | null>(null);
@@ -78,6 +80,21 @@ const Resources = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const canWorkspaceCreate = canAction("api.workspace.create");
+  const canWorkspaceUpdate = canAction("api.workspace.update");
+  const canWorkspaceDelete = canAction("api.workspace.delete");
+  const canWorkspaceMemberManage = canAction("api.workspace.member.manage");
+  const canKbCreate = canAction("api.kb.create");
+  const canKbUpdate = canAction("api.kb.update");
+  const canKbDelete = canAction("api.kb.delete");
+  const canKbMemberManage = canAction("api.kb.member.manage");
+  const canDocumentWrite = canAction("api.document.write");
+  const canDocumentDelete = canAction("api.document.delete");
+
+  const toastNoPermission = (label: string) => {
+    toast({ title: "无权限", description: `当前角色无权执行：${label}`, variant: "destructive" });
+  };
 
   const resetForm = () => {
     setFormName("");
@@ -130,6 +147,10 @@ const Resources = () => {
   const reindexDoc = useReindexDocument();
 
   const handleCreateWs = async () => {
+    if (!canWorkspaceCreate) {
+      toastNoPermission("创建工作空间");
+      return;
+    }
     try {
       await createWs.mutateAsync({ name: formName, slug: formSlug, description: formDesc || undefined });
       toast({ title: "工作空间创建成功" });
@@ -141,6 +162,10 @@ const Resources = () => {
   };
 
   const openWorkspaceEditor = async (workspace: WorkspaceData) => {
+    if (!canWorkspaceUpdate) {
+      toastNoPermission("编辑工作空间");
+      return;
+    }
     try {
       const latest = await workspaceApi.get(workspace.id);
       setEditingWsId(workspace.id);
@@ -153,6 +178,10 @@ const Resources = () => {
   };
 
   const handleUpdateWs = async () => {
+    if (!canWorkspaceUpdate) {
+      toastNoPermission("编辑工作空间");
+      return;
+    }
     if (!editingWsId) return;
     try {
       const updated = await updateWs.mutateAsync({
@@ -174,6 +203,10 @@ const Resources = () => {
   };
 
   const handleCreateKb = async () => {
+    if (!canKbCreate) {
+      toastNoPermission("创建知识库");
+      return;
+    }
     if (!selectedWs) return;
     try {
       await createKb.mutateAsync({ workspace_id: selectedWs.id, name: formName, description: formDesc || undefined });
@@ -186,6 +219,10 @@ const Resources = () => {
   };
 
   const openKbEditor = async (kb: KnowledgeBaseData) => {
+    if (!canKbUpdate) {
+      toastNoPermission("编辑知识库");
+      return;
+    }
     try {
       const latest = await kbApi.get(kb.id);
       setEditingKbId(kb.id);
@@ -197,6 +234,10 @@ const Resources = () => {
   };
 
   const handleUpdateKb = async () => {
+    if (!canKbUpdate) {
+      toastNoPermission("编辑知识库");
+      return;
+    }
     if (!editingKbId) return;
     try {
       const updated = await updateKb.mutateAsync({
@@ -214,6 +255,10 @@ const Resources = () => {
   };
 
   const handleUploadDoc = async () => {
+    if (!canDocumentWrite) {
+      toastNoPermission("上传文档");
+      return;
+    }
     if (!selectedKb || !selectedFile) return;
     try {
       await uploadDoc.mutateAsync({ kbId: selectedKb.id, file: selectedFile });
@@ -226,6 +271,10 @@ const Resources = () => {
   };
 
   const openDocEditor = async (doc: DocumentData) => {
+    if (!canDocumentWrite) {
+      toastNoPermission("编辑文档");
+      return;
+    }
     try {
       const latest = await documentApi.get(doc.id);
       setEditingDocId(doc.id);
@@ -237,6 +286,10 @@ const Resources = () => {
   };
 
   const handleUpdateDoc = async () => {
+    if (!canDocumentWrite) {
+      toastNoPermission("编辑文档");
+      return;
+    }
     if (!editingDocId) return;
     let metadata: Record<string, unknown> | undefined = undefined;
     if (editDocMetadata.trim()) {
@@ -264,6 +317,10 @@ const Resources = () => {
   };
 
   const handleReindex = async () => {
+    if (!canDocumentWrite) {
+      toastNoPermission("重建索引");
+      return;
+    }
     if (!showConfirmReindex) return;
     try {
       await reindexDoc.mutateAsync(showConfirmReindex.id);
@@ -275,6 +332,10 @@ const Resources = () => {
   };
 
   const handleDeleteWorkspace = async (workspace: WorkspaceData) => {
+    if (!canWorkspaceDelete) {
+      toastNoPermission("删除工作空间");
+      return;
+    }
     if (!confirm(`确认删除工作空间「${workspace.name}」？`)) return;
     try {
       await deleteWs.mutateAsync(workspace.id);
@@ -291,6 +352,10 @@ const Resources = () => {
   };
 
   const handleDeleteKb = async (kb: KnowledgeBaseData) => {
+    if (!canKbDelete) {
+      toastNoPermission("删除知识库");
+      return;
+    }
     if (!confirm(`确认删除知识库「${kb.name}」？`)) return;
     try {
       await deleteKb.mutateAsync(kb.id);
@@ -306,6 +371,10 @@ const Resources = () => {
   };
 
   const handleDeleteDoc = async (doc: DocumentData) => {
+    if (!canDocumentDelete) {
+      toastNoPermission("删除文档");
+      return;
+    }
     if (!confirm(`确认删除文档「${doc.title}」？`)) return;
     try {
       await deleteDoc.mutateAsync(doc.id);
@@ -320,6 +389,10 @@ const Resources = () => {
   };
 
   const handleUpsertWorkspaceMember = async () => {
+    if (!canWorkspaceMemberManage) {
+      toastNoPermission("管理工作空间成员");
+      return;
+    }
     if (!managingWs || !memberUserId) return;
     try {
       await upsertWsMember.mutateAsync({ wsId: managingWs.id, userId: memberUserId, role: memberRole });
@@ -332,6 +405,10 @@ const Resources = () => {
   };
 
   const handleRemoveWorkspaceMember = async (userId: string) => {
+    if (!canWorkspaceMemberManage) {
+      toastNoPermission("管理工作空间成员");
+      return;
+    }
     if (!managingWs) return;
     try {
       await removeWsMember.mutateAsync({ wsId: managingWs.id, userId });
@@ -342,6 +419,10 @@ const Resources = () => {
   };
 
   const handleUpsertKbMember = async () => {
+    if (!canKbMemberManage) {
+      toastNoPermission("管理知识库成员");
+      return;
+    }
     if (!managingKb || !kbMemberUserId) return;
     try {
       await upsertKbMember.mutateAsync({ kbId: managingKb.id, userId: kbMemberUserId, role: kbMemberRole });
@@ -354,6 +435,10 @@ const Resources = () => {
   };
 
   const handleRemoveKbMember = async (userId: string) => {
+    if (!canKbMemberManage) {
+      toastNoPermission("管理知识库成员");
+      return;
+    }
     if (!managingKb) return;
     try {
       await removeKbMember.mutateAsync({ kbId: managingKb.id, userId });
@@ -426,9 +511,11 @@ const Resources = () => {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-foreground">工作空间</h2>
-              <button onClick={() => setShowCreateWs(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                <Plus className="h-3.5 w-3.5" /> 创建空间
-              </button>
+              {canWorkspaceCreate && (
+                <button onClick={() => setShowCreateWs(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                  <Plus className="h-3.5 w-3.5" /> 创建空间
+                </button>
+              )}
             </div>
             {wsLoading ? (
               <LoadingSkeleton rows={3} columns={3} />
@@ -445,27 +532,33 @@ const Resources = () => {
                         <FolderOpen className="h-4 w-4 text-accent" />
                       </div>
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); openWorkspaceEditor(ws); }}
-                          className="p-1 rounded hover:bg-secondary"
-                          title="编辑工作空间"
-                        >
-                          <Pencil className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setManagingWs(ws); }}
-                          className="p-1 rounded hover:bg-secondary"
-                          title="成员管理"
-                        >
-                          <Users className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(ws); }}
-                          className="p-1 rounded hover:bg-destructive/10"
-                          title="删除工作空间"
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </button>
+                        {canWorkspaceUpdate && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openWorkspaceEditor(ws); }}
+                            className="p-1 rounded hover:bg-secondary"
+                            title="编辑工作空间"
+                          >
+                            <Pencil className="h-4 w-4 text-muted-foreground" />
+                          </button>
+                        )}
+                        {canWorkspaceMemberManage && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setManagingWs(ws); }}
+                            className="p-1 rounded hover:bg-secondary"
+                            title="成员管理"
+                          >
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                          </button>
+                        )}
+                        {canWorkspaceDelete && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(ws); }}
+                            className="p-1 rounded hover:bg-destructive/10"
+                            title="删除工作空间"
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </button>
+                        )}
                       </div>
                     </div>
                     <h3 className="text-sm font-semibold text-foreground mt-3 group-hover:text-primary transition-colors">{ws.name}</h3>
@@ -491,9 +584,11 @@ const Resources = () => {
                 </button>
                 <h2 className="text-lg font-semibold text-foreground">{selectedWs.name} / 知识库</h2>
               </div>
-              <button onClick={() => setShowCreateKb(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                <Plus className="h-3.5 w-3.5" /> 创建知识库
-              </button>
+              {canKbCreate && (
+                <button onClick={() => setShowCreateKb(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                  <Plus className="h-3.5 w-3.5" /> 创建知识库
+                </button>
+              )}
             </div>
             <div className="relative max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -525,27 +620,33 @@ const Resources = () => {
                         <td className="px-4 py-3 text-[11px] text-muted-foreground font-mono">{kb.embedding_model}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1 justify-end">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openKbEditor(kb); }}
-                              className="p-1 rounded hover:bg-secondary"
-                              title="编辑知识库"
-                            >
-                              <Pencil className="h-4 w-4 text-muted-foreground" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setManagingKb(kb); }}
-                              className="p-1 rounded hover:bg-secondary"
-                              title="成员管理"
-                            >
-                              <Users className="h-4 w-4 text-muted-foreground" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDeleteKb(kb); }}
-                              className="p-1 rounded hover:bg-destructive/10"
-                              title="删除知识库"
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </button>
+                            {canKbUpdate && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); openKbEditor(kb); }}
+                                className="p-1 rounded hover:bg-secondary"
+                                title="编辑知识库"
+                              >
+                                <Pencil className="h-4 w-4 text-muted-foreground" />
+                              </button>
+                            )}
+                            {canKbMemberManage && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setManagingKb(kb); }}
+                                className="p-1 rounded hover:bg-secondary"
+                                title="成员管理"
+                              >
+                                <Users className="h-4 w-4 text-muted-foreground" />
+                              </button>
+                            )}
+                            {canKbDelete && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteKb(kb); }}
+                                className="p-1 rounded hover:bg-destructive/10"
+                                title="删除知识库"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -579,9 +680,11 @@ const Resources = () => {
                   )}
                 </div>
               </div>
-              <button onClick={() => setShowUploadDoc(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                <Upload className="h-3.5 w-3.5" /> 上传文档
-              </button>
+              {canDocumentWrite && (
+                <button onClick={() => setShowUploadDoc(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                  <Upload className="h-3.5 w-3.5" /> 上传文档
+                </button>
+              )}
             </div>
             <div className="relative max-w-xs">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -619,10 +722,12 @@ const Resources = () => {
                         <td className="px-4 py-3 text-muted-foreground text-[11px] font-mono">{doc.source_type}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
-                            <button onClick={() => openDocEditor(doc)} className="p-1 rounded hover:bg-secondary" title="编辑">
-                              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                            </button>
-                            {(doc.status === "failed" || doc.status === "error") && (
+                            {canDocumentWrite && (
+                              <button onClick={() => openDocEditor(doc)} className="p-1 rounded hover:bg-secondary" title="编辑">
+                                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                              </button>
+                            )}
+                            {canDocumentWrite && (doc.status === "failed" || doc.status === "error") && (
                               <button onClick={() => setShowConfirmReindex(doc)} className="p-1 rounded hover:bg-warning/10" title="重建索引">
                                 <RefreshCw className="h-3.5 w-3.5 text-warning" />
                               </button>
@@ -631,9 +736,11 @@ const Resources = () => {
                               className="p-1 rounded hover:bg-secondary" title="详情">
                               <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                             </button>
-                            <button onClick={() => handleDeleteDoc(doc)} className="p-1 rounded hover:bg-destructive/10" title="删除">
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </button>
+                            {canDocumentDelete && (
+                              <button onClick={() => handleDeleteDoc(doc)} className="p-1 rounded hover:bg-destructive/10" title="删除">
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -666,13 +773,17 @@ const Resources = () => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => openDocEditor(selectedDoc)} className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-secondary transition-colors">
-                  <Pencil className="h-3.5 w-3.5" /> 编辑文档
-                </button>
-                <button onClick={() => setShowConfirmReindex(selectedDoc)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-secondary transition-colors">
-                  <RefreshCw className="h-3.5 w-3.5" /> 重建索引
-                </button>
+                {canDocumentWrite && (
+                  <>
+                    <button onClick={() => openDocEditor(selectedDoc)} className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-secondary transition-colors">
+                      <Pencil className="h-3.5 w-3.5" /> 编辑文档
+                    </button>
+                    <button onClick={() => setShowConfirmReindex(selectedDoc)}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-secondary transition-colors">
+                      <RefreshCw className="h-3.5 w-3.5" /> 重建索引
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -759,7 +870,7 @@ const Resources = () => {
       <FormDialog open={showCreateWs} onClose={() => { setShowCreateWs(false); resetForm(); }} title="创建工作空间"
         footer={<>
           <DialogButton onClick={() => { setShowCreateWs(false); resetForm(); }}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!formName || !formSlug || createWs.isPending} onClick={handleCreateWs}>
+          <DialogButton variant="primary" disabled={!canWorkspaceCreate || !formName || !formSlug || createWs.isPending} onClick={handleCreateWs}>
             {createWs.isPending ? "创建中..." : "创建"}
           </DialogButton>
         </>}>
@@ -771,7 +882,7 @@ const Resources = () => {
       <FormDialog open={!!editingWsId} onClose={() => setEditingWsId(null)} title="编辑工作空间"
         footer={<>
           <DialogButton onClick={() => setEditingWsId(null)}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!editName || !editSlug || updateWs.isPending} onClick={handleUpdateWs}>
+          <DialogButton variant="primary" disabled={!canWorkspaceUpdate || !editName || !editSlug || updateWs.isPending} onClick={handleUpdateWs}>
             {updateWs.isPending ? "保存中..." : "保存"}
           </DialogButton>
         </>}>
@@ -798,7 +909,7 @@ const Resources = () => {
                 { value: "viewer", label: "viewer" },
               ]} />
             </FormField>
-            <DialogButton variant="primary" disabled={!memberUserId || upsertWsMember.isPending} onClick={handleUpsertWorkspaceMember}>
+            <DialogButton variant="primary" disabled={!canWorkspaceMemberManage || !memberUserId || upsertWsMember.isPending} onClick={handleUpsertWorkspaceMember}>
               {upsertWsMember.isPending ? "处理中..." : "新增/更新成员"}
             </DialogButton>
           </div>
@@ -825,9 +936,11 @@ const Resources = () => {
                       <td className="px-3 py-2 font-mono text-[12px]">{m.role}</td>
                       <td className="px-3 py-2">{statusBadge(String(m.status))}</td>
                       <td className="px-3 py-2 text-right">
-                        <button onClick={() => handleRemoveWorkspaceMember(m.user_id)} className="text-[12px] text-destructive hover:underline">
-                          移除
-                        </button>
+                        {canWorkspaceMemberManage && (
+                          <button onClick={() => handleRemoveWorkspaceMember(m.user_id)} className="text-[12px] text-destructive hover:underline">
+                            移除
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -844,7 +957,7 @@ const Resources = () => {
       <FormDialog open={showCreateKb} onClose={() => { setShowCreateKb(false); resetForm(); }} title="创建知识库"
         footer={<>
           <DialogButton onClick={() => { setShowCreateKb(false); resetForm(); }}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!formName || createKb.isPending} onClick={handleCreateKb}>
+          <DialogButton variant="primary" disabled={!canKbCreate || !formName || createKb.isPending} onClick={handleCreateKb}>
             {createKb.isPending ? "创建中..." : "创建"}
           </DialogButton>
         </>}>
@@ -855,7 +968,7 @@ const Resources = () => {
       <FormDialog open={!!editingKbId} onClose={() => setEditingKbId(null)} title="编辑知识库"
         footer={<>
           <DialogButton onClick={() => setEditingKbId(null)}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!editName || updateKb.isPending} onClick={handleUpdateKb}>
+          <DialogButton variant="primary" disabled={!canKbUpdate || !editName || updateKb.isPending} onClick={handleUpdateKb}>
             {updateKb.isPending ? "保存中..." : "保存"}
           </DialogButton>
         </>}>
@@ -880,7 +993,7 @@ const Resources = () => {
                 { value: "viewer", label: "viewer" },
               ]} />
             </FormField>
-            <DialogButton variant="primary" disabled={!kbMemberUserId || upsertKbMember.isPending} onClick={handleUpsertKbMember}>
+            <DialogButton variant="primary" disabled={!canKbMemberManage || !kbMemberUserId || upsertKbMember.isPending} onClick={handleUpsertKbMember}>
               {upsertKbMember.isPending ? "处理中..." : "新增/更新成员"}
             </DialogButton>
           </div>
@@ -907,9 +1020,11 @@ const Resources = () => {
                       <td className="px-3 py-2 font-mono text-[12px]">{m.role}</td>
                       <td className="px-3 py-2">{statusBadge(String(m.status))}</td>
                       <td className="px-3 py-2 text-right">
-                        <button onClick={() => handleRemoveKbMember(m.user_id)} className="text-[12px] text-destructive hover:underline">
-                          移除
-                        </button>
+                        {canKbMemberManage && (
+                          <button onClick={() => handleRemoveKbMember(m.user_id)} className="text-[12px] text-destructive hover:underline">
+                            移除
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -926,7 +1041,7 @@ const Resources = () => {
       <FormDialog open={showUploadDoc} onClose={() => { setShowUploadDoc(false); resetForm(); }} title="上传文档"
         footer={<>
           <DialogButton onClick={() => { setShowUploadDoc(false); resetForm(); }}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!selectedFile || uploadDoc.isPending} onClick={handleUploadDoc}>
+          <DialogButton variant="primary" disabled={!canDocumentWrite || !selectedFile || uploadDoc.isPending} onClick={handleUploadDoc}>
             {uploadDoc.isPending ? "上传中..." : "上传"}
           </DialogButton>
         </>}>
@@ -954,7 +1069,7 @@ const Resources = () => {
       <FormDialog open={!!editingDocId} onClose={() => setEditingDocId(null)} title="编辑文档"
         footer={<>
           <DialogButton onClick={() => setEditingDocId(null)}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!editDocTitle || updateDoc.isPending} onClick={handleUpdateDoc}>
+          <DialogButton variant="primary" disabled={!canDocumentWrite || !editDocTitle || updateDoc.isPending} onClick={handleUpdateDoc}>
             {updateDoc.isPending ? "保存中..." : "保存"}
           </DialogButton>
         </>}>
@@ -965,7 +1080,7 @@ const Resources = () => {
       <FormDialog open={!!showConfirmReindex} onClose={() => setShowConfirmReindex(null)} title="确认重建索引" width="max-w-sm"
         footer={<>
           <DialogButton onClick={() => setShowConfirmReindex(null)}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={reindexDoc.isPending} onClick={handleReindex}>
+          <DialogButton variant="primary" disabled={!canDocumentWrite || reindexDoc.isPending} onClick={handleReindex}>
             {reindexDoc.isPending ? "处理中..." : "确认重建"}
           </DialogButton>
         </>}>

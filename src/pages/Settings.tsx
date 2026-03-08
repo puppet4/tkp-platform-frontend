@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import { usersApi, type UserPreferencesData } from "@/lib/api";
+import { authApi, setToken, usersApi, type UserPreferencesData } from "@/lib/api";
 import { Settings as SettingsIcon, User, Bell, Shield, Palette, Globe, type LucideIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
@@ -32,8 +32,6 @@ const defaultPreferences: UserPreferencesData = {
   },
 };
 
-const TWO_FACTOR_CODE_TTL_MS = 5 * 60 * 1000;
-
 const Settings = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -48,9 +46,7 @@ const Settings = () => {
   const [passwordResetEmail, setPasswordResetEmail] = useState(true);
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [twoFactorMode, setTwoFactorMode] = useState<TwoFactorMode | null>(null);
-  const [twoFactorCode, setTwoFactorCode] = useState("");
-  const [twoFactorInput, setTwoFactorInput] = useState("");
-  const [twoFactorExpireAt, setTwoFactorExpireAt] = useState<number | null>(null);
+  const [twoFactorPassword, setTwoFactorPassword] = useState("");
 
   const [theme, setTheme] = useState<"light" | "dark">(
     document.documentElement.classList.contains("dark") ? "dark" : "light",
@@ -153,56 +149,49 @@ const Settings = () => {
     else document.documentElement.classList.remove("dark");
   };
 
-  const twoFactorLeftSeconds = useMemo(() => {
-    if (!twoFactorExpireAt) return 0;
-    return Math.max(0, Math.floor((twoFactorExpireAt - Date.now()) / 1000));
-  }, [twoFactorExpireAt]);
-
   const startTwoFactorFlow = (mode: TwoFactorMode) => {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
     setTwoFactorMode(mode);
-    setTwoFactorCode(code);
-    setTwoFactorInput("");
-    setTwoFactorExpireAt(Date.now() + TWO_FACTOR_CODE_TTL_MS);
-    toast({
-      title: mode === "enable" ? "2FA 启用验证已发起" : "2FA 停用验证已发起",
-      description: `验证码已发送到 ${email || "当前邮箱"}。演示码：${code}`,
-    });
+    setTwoFactorPassword("");
   };
 
   const cancelTwoFactorFlow = () => {
     setTwoFactorMode(null);
-    setTwoFactorCode("");
-    setTwoFactorInput("");
-    setTwoFactorExpireAt(null);
+    setTwoFactorPassword("");
   };
 
-  const confirmTwoFactorFlow = () => {
+  const confirmTwoFactorFlow = async () => {
     if (!twoFactorMode || !user?.id) return;
-    if (!twoFactorExpireAt || Date.now() > twoFactorExpireAt) {
-      toast({ title: "验证码已过期", description: "请重新发起验证", variant: "destructive" });
-      cancelTwoFactorFlow();
+    if (!user.email || !twoFactorPassword.trim()) {
+      toast({ title: "请输入当前密码", variant: "destructive" });
       return;
     }
-    if (twoFactorInput.trim() !== twoFactorCode) {
-      toast({ title: "验证码错误", variant: "destructive" });
+
+    try {
+      // Re-authenticate with backend before changing security settings.
+      const authData = await authApi.login(user.email, twoFactorPassword);
+      setToken(authData.access_token);
+    } catch (e) {
+      toast({ title: "身份验证失败", description: (e as Error).message, variant: "destructive" });
       return;
     }
 
     const nextEnabled = twoFactorMode === "enable";
-    setTwoFactorEnabled(nextEnabled);
-    savePreferencesMutation.mutate({
-      userId: user.id,
-      payload: buildPreferencesPayload(nextEnabled),
-    }, {
-      onSuccess: () => {
-        toast({ title: nextEnabled ? "2FA 已启用" : "2FA 已停用" });
-        cancelTwoFactorFlow();
+    savePreferencesMutation.mutate(
+      {
+        userId: user.id,
+        payload: buildPreferencesPayload(nextEnabled),
       },
-      onError: (e: Error) => {
-        toast({ title: "2FA 状态保存失败", description: e.message, variant: "destructive" });
+      {
+        onSuccess: () => {
+          setTwoFactorEnabled(nextEnabled);
+          toast({ title: nextEnabled ? "2FA 已启用" : "2FA 已停用" });
+          cancelTwoFactorFlow();
+        },
+        onError: (e: Error) => {
+          toast({ title: "2FA 状态保存失败", description: e.message, variant: "destructive" });
+        },
       },
-    });
+    );
   };
 
   return (
@@ -315,18 +304,16 @@ const Settings = () => {
                   {twoFactorMode && (
                     <div className="p-3 rounded-md bg-secondary/50 border border-border space-y-2">
                       <div className="text-[12px] text-foreground">
-                        {twoFactorMode === "enable" ? "启用" : "停用"}验证进行中，请输入 6 位验证码
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        有效期剩余：{twoFactorLeftSeconds}s
+                        {twoFactorMode === "enable" ? "启用" : "停用"}验证进行中，请输入当前登录密码完成后端校验
                       </div>
                       <Input
-                        value={twoFactorInput}
-                        onChange={(e) => setTwoFactorInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                        placeholder="输入验证码"
+                        type="password"
+                        value={twoFactorPassword}
+                        onChange={(e) => setTwoFactorPassword(e.target.value)}
+                        placeholder="输入当前密码"
                       />
                       <div className="flex items-center gap-2">
-                        <Button onClick={confirmTwoFactorFlow} disabled={twoFactorInput.length !== 6 || savePreferencesMutation.isPending}>
+                        <Button onClick={confirmTwoFactorFlow} disabled={!twoFactorPassword.trim() || savePreferencesMutation.isPending}>
                           确认
                         </Button>
                         <Button variant="outline" onClick={cancelTwoFactorFlow}>取消</Button>

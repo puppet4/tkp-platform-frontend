@@ -17,12 +17,14 @@ import { toast } from "sonner";
 import { PageTabs } from "@/components/PageTabs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRoleAccess } from "@/hooks/useRoleAccess";
 
 type Tab = "permissions" | "deletion";
 
 const Governance = () => {
   const qc = useQueryClient();
-  const { uiManifest } = useAuth();
+  const { uiManifest, refreshPermissions } = useAuth();
+  const { roleName, canAction, canFeature } = useRoleAccess();
   const [tab, setTab] = useState<Tab>("permissions");
 
   const [showDeleteReq, setShowDeleteReq] = useState(false);
@@ -43,6 +45,22 @@ const Governance = () => {
     { id: "permissions", label: "权限中心", icon: Key },
     { id: "deletion", label: "删除治理", icon: Trash2 },
   ];
+  const canManageTenant = canAction("api.tenant.member.manage");
+  const canViewPermissionCenter = canFeature("feature.auth.permissions") || canManageTenant;
+  const canEditPermissionCenter = canManageTenant;
+  const canCreateDeletionRequest = canAction("api.tenant.read");
+  const canReviewDeletion = roleName === "owner" || roleName === "admin";
+  const visibleTabs = tabs.filter((item) => (item.id === "permissions" ? canViewPermissionCenter : true));
+
+  useEffect(() => {
+    if (tab === "permissions" && !canViewPermissionCenter) {
+      setTab("deletion");
+    }
+  }, [tab, canViewPermissionCenter]);
+
+  const toastNoPermission = (label: string) => {
+    toast.error(`当前角色无权执行：${label}`);
+  };
 
   // Permission center queries
   const { data: permissionCatalog = [], isLoading: catalogLoading } = useQuery({
@@ -94,6 +112,7 @@ const Governance = () => {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["permission-roles"] });
       await refetchRuntimeManifest();
+      await refreshPermissions();
       toast.success("角色权限已更新");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -105,6 +124,7 @@ const Governance = () => {
       setEditingPermissionCodes(data.permission_codes || []);
       await qc.invalidateQueries({ queryKey: ["permission-roles"] });
       await refetchRuntimeManifest();
+      await refreshPermissions();
       toast.success("角色权限已重置为默认值");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -179,6 +199,10 @@ const Governance = () => {
   });
 
   const togglePermissionCode = (code: string) => {
+    if (!canEditPermissionCenter) {
+      toastNoPermission("编辑角色权限");
+      return;
+    }
     setEditingPermissionCodes((prev) =>
       prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
     );
@@ -190,7 +214,7 @@ const Governance = () => {
         <h1 className="text-xl font-semibold text-foreground mb-1">权限与治理</h1>
         <p className="text-sm text-muted-foreground mb-5">管理角色权限、删除审批与合规</p>
 
-        <PageTabs tabs={tabs} activeTab={tab} onTabChange={(id) => setTab(id as Tab)} />
+        <PageTabs tabs={visibleTabs} activeTab={tab} onTabChange={(id) => setTab(id as Tab)} />
 
         {/* Permissions */}
         {tab === "permissions" && (
@@ -250,6 +274,7 @@ const Governance = () => {
                     />
                     <button
                       onClick={() => refetchRuntimeManifest()}
+                      disabled={!canViewPermissionCenter}
                       className="text-[12px] px-2.5 py-1.5 rounded-md border border-border hover:bg-secondary"
                     >
                       刷新运行态
@@ -263,6 +288,7 @@ const Governance = () => {
                           <input
                             type="checkbox"
                             checked={editingPermissionCodes.includes(code)}
+                            disabled={!canEditPermissionCenter}
                             onChange={() => togglePermissionCode(code)}
                           />
                           <span className="text-[12px] font-mono text-foreground break-all">{code}</span>
@@ -276,16 +302,30 @@ const Governance = () => {
 
                   <div className="flex items-center justify-end gap-2">
                     <button
-                      onClick={() => selectedRole && resetRoleMutation.mutate(selectedRole)}
-                      disabled={!selectedRole || resetRoleMutation.isPending}
+                      onClick={() => {
+                        if (!canEditPermissionCenter) {
+                          toastNoPermission("重置角色权限");
+                          return;
+                        }
+                        if (selectedRole) resetRoleMutation.mutate(selectedRole);
+                      }}
+                      disabled={!canEditPermissionCenter || !selectedRole || resetRoleMutation.isPending}
                       className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
                     >
                       <RotateCcw className="h-3.5 w-3.5 inline mr-1" />
                       重置默认
                     </button>
                     <button
-                      onClick={() => selectedRole && updateRoleMutation.mutate({ role: selectedRole, permissionCodes: editingPermissionCodes })}
-                      disabled={!selectedRole || updateRoleMutation.isPending}
+                      onClick={() => {
+                        if (!canEditPermissionCenter) {
+                          toastNoPermission("保存角色权限");
+                          return;
+                        }
+                        if (selectedRole) {
+                          updateRoleMutation.mutate({ role: selectedRole, permissionCodes: editingPermissionCodes });
+                        }
+                      }}
+                      disabled={!canEditPermissionCenter || !selectedRole || updateRoleMutation.isPending}
                       className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
                     >
                       {updateRoleMutation.isPending ? "保存中..." : "保存权限"}
@@ -302,7 +342,14 @@ const Governance = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">删除请求</h2>
-              <button onClick={() => setShowDeleteReq(true)}
+              <button onClick={() => {
+                if (!canCreateDeletionRequest) {
+                  toastNoPermission("创建删除请求");
+                  return;
+                }
+                setShowDeleteReq(true);
+              }}
+                disabled={!canCreateDeletionRequest}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors">
                 <Trash2 className="h-3.5 w-3.5" /> 新建删除请求
               </button>
@@ -321,22 +368,40 @@ const Governance = () => {
                 </FormField>
                 <div className="flex gap-2 justify-center flex-wrap">
                   <button
-                    onClick={() => formTarget && setShowConfirm({ type: "approve", id: formTarget })}
-                    disabled={!formTarget}
+                    onClick={() => {
+                      if (!canReviewDeletion) {
+                        toastNoPermission("批准删除请求");
+                        return;
+                      }
+                      if (formTarget) setShowConfirm({ type: "approve", id: formTarget });
+                    }}
+                    disabled={!canReviewDeletion || !formTarget}
                     className="text-[11px] px-3 py-1.5 rounded-md bg-success/10 text-success hover:bg-success/20 disabled:opacity-30 transition-colors"
                   >
                     <CheckCircle className="h-3 w-3 inline mr-1" />批准
                   </button>
                   <button
-                    onClick={() => formTarget && setShowConfirm({ type: "reject", id: formTarget })}
-                    disabled={!formTarget}
+                    onClick={() => {
+                      if (!canReviewDeletion) {
+                        toastNoPermission("拒绝删除请求");
+                        return;
+                      }
+                      if (formTarget) setShowConfirm({ type: "reject", id: formTarget });
+                    }}
+                    disabled={!canReviewDeletion || !formTarget}
                     className="text-[11px] px-3 py-1.5 rounded-md bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-30 transition-colors"
                   >
                     <XCircle className="h-3 w-3 inline mr-1" />拒绝
                   </button>
                   <button
-                    onClick={() => formTarget && setShowConfirm({ type: "execute", id: formTarget })}
-                    disabled={!formTarget}
+                    onClick={() => {
+                      if (!canReviewDeletion) {
+                        toastNoPermission("执行删除");
+                        return;
+                      }
+                      if (formTarget) setShowConfirm({ type: "execute", id: formTarget });
+                    }}
+                    disabled={!canReviewDeletion || !formTarget}
                     className="text-[11px] px-3 py-1.5 rounded-md bg-warning/10 text-warning hover:bg-warning/20 disabled:opacity-30 transition-colors"
                   >
                     <Play className="h-3 w-3 inline mr-1" />执行
@@ -410,8 +475,14 @@ const Governance = () => {
       <FormDialog open={showDeleteReq} onClose={() => { setShowDeleteReq(false); setFormTarget(""); setFormReason(""); }} title="新建删除请求" description="提交数据删除申请，需经管理员审批"
         footer={<>
           <DialogButton onClick={() => { setShowDeleteReq(false); setFormTarget(""); setFormReason(""); }}>取消</DialogButton>
-          <DialogButton variant="destructive" disabled={!formTarget || !formReason || createDeletionMutation.isPending}
-            onClick={() => createDeletionMutation.mutate()}>
+          <DialogButton variant="destructive" disabled={!canCreateDeletionRequest || !formTarget || !formReason || createDeletionMutation.isPending}
+            onClick={() => {
+              if (!canCreateDeletionRequest) {
+                toastNoPermission("提交删除请求");
+                return;
+              }
+              createDeletionMutation.mutate();
+            }}>
             {createDeletionMutation.isPending ? "提交中..." : "提交申请"}
           </DialogButton>
         </>}>
@@ -433,9 +504,19 @@ const Governance = () => {
         footer={<>
           <DialogButton onClick={() => { setShowConfirm(null); setRejectReason(""); }}>取消</DialogButton>
           <DialogButton variant={showConfirm?.type === "reject" ? "destructive" : "primary"}
-            disabled={approveMutation.isPending || rejectMutation.isPending || executeMutation.isPending || (showConfirm?.type === "reject" && !rejectReason)}
+            disabled={
+              !canReviewDeletion ||
+              approveMutation.isPending ||
+              rejectMutation.isPending ||
+              executeMutation.isPending ||
+              (showConfirm?.type === "reject" && !rejectReason)
+            }
             onClick={() => {
               if (!showConfirm) return;
+              if (!canReviewDeletion) {
+                toastNoPermission("审批删除请求");
+                return;
+              }
               if (showConfirm.type === "approve") approveMutation.mutate(showConfirm.id);
               else if (showConfirm.type === "reject") rejectMutation.mutate({ id: showConfirm.id, reason: rejectReason });
               else executeMutation.mutate(showConfirm.id);

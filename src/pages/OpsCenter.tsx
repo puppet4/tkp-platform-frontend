@@ -16,11 +16,13 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PageTabs } from "@/components/PageTabs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRoleAccess } from "@/hooks/useRoleAccess";
 
 type Tab = "overview" | "alerts" | "incidents" | "rollouts" | "quality" | "cost" | "webhooks";
 
 const OpsCenter = () => {
   const qc = useQueryClient();
+  const { roleName, canAction } = useRoleAccess();
   const [tab, setTab] = useState<Tab>("overview");
   const [windowHours, setWindowHours] = useState(24);
 
@@ -48,6 +50,11 @@ const OpsCenter = () => {
 
   const [formUrl, setFormUrl] = useState("");
   const [formWhName, setFormWhName] = useState("");
+  const canOpsManage = (roleName === "owner" || roleName === "admin") && canAction("api.tenant.member.manage");
+
+  const toastNoPermission = (label: string) => {
+    toast.error(`当前角色无权执行：${label}`);
+  };
 
   // ─── Data queries ──────────────────────────────────────────────
   const { data: overview, isLoading: overviewLoading } = useQuery({
@@ -400,9 +407,11 @@ const OpsCenter = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">工单管理</h2>
-              <button onClick={() => setShowNewIncident(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                <Plus className="h-3.5 w-3.5" /> 创建工单
-              </button>
+              {canOpsManage && (
+                <button onClick={() => setShowNewIncident(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                  <Plus className="h-3.5 w-3.5" /> 创建工单
+                </button>
+              )}
             </div>
 
             <div className="bg-card rounded-lg border border-border p-4 shadow-xs">
@@ -420,21 +429,23 @@ const OpsCenter = () => {
                           <div className="text-[11px] text-muted-foreground mt-1">建议: {d.suggestion}</div>
                           <div className="text-[11px] text-muted-foreground mt-1 font-mono">{d.source_code}</div>
                         </div>
-                        <button
-                          onClick={() => {
-                            createTicketMutation.mutate({
-                              title: d.title,
-                              severity: d.severity || "warn",
-                              description: `${d.summary}\n建议: ${d.suggestion}`,
-                              source_code: d.source_code || "diagnosis",
-                              diagnosis: { suggestion: d.suggestion },
-                              context: d.context || {},
-                            });
-                          }}
-                          className="text-[11px] px-2.5 py-1.5 rounded-md border border-border hover:bg-secondary transition-colors"
-                        >
-                          一键建单
-                        </button>
+                        {canOpsManage && (
+                          <button
+                            onClick={() => {
+                              createTicketMutation.mutate({
+                                title: d.title,
+                                severity: d.severity || "warn",
+                                description: `${d.summary}\n建议: ${d.suggestion}`,
+                                source_code: d.source_code || "diagnosis",
+                                diagnosis: { suggestion: d.suggestion },
+                                context: d.context || {},
+                              });
+                            }}
+                            className="text-[11px] px-2.5 py-1.5 rounded-md border border-border hover:bg-secondary transition-colors"
+                          >
+                            一键建单
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -478,18 +489,20 @@ const OpsCenter = () => {
                         <td className="px-4 py-3 text-muted-foreground">{t.assignee || "-"}</td>
                         <td className="px-4 py-3 text-muted-foreground text-[12px]">{new Date(t.created_at).toLocaleDateString("zh-CN")}</td>
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => {
-                              setShowEditIncident(t);
-                              setTicketStatus(t.status || "open");
-                              setTicketAssignee(t.assignee || "");
-                              setTicketResolution(t.resolution || "");
-                            }}
-                            className="p-1 rounded hover:bg-secondary"
-                            title="更新工单"
-                          >
-                            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                          </button>
+                          {canOpsManage && (
+                            <button
+                              onClick={() => {
+                                setShowEditIncident(t);
+                                setTicketStatus(t.status || "open");
+                                setTicketAssignee(t.assignee || "");
+                                setTicketResolution(t.resolution || "");
+                              }}
+                              className="p-1 rounded hover:bg-secondary"
+                              title="更新工单"
+                            >
+                              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -508,9 +521,11 @@ const OpsCenter = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">发布管理</h2>
-              <button onClick={() => setShowNewRollout(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                <Plus className="h-3.5 w-3.5" /> 创建发布
-              </button>
+              {canOpsManage && (
+                <button onClick={() => setShowNewRollout(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                  <Plus className="h-3.5 w-3.5" /> 创建发布
+                </button>
+              )}
             </div>
             {rolloutsLoading ? <LoadingState /> : (
               <div className="space-y-3">
@@ -529,7 +544,7 @@ const OpsCenter = () => {
                           }`}>{r.status}</span>
                         </div>
                       </div>
-                      {(r.status === "rolling" || r.status === "in_progress") && (
+                      {canOpsManage && (r.status === "rolling" || r.status === "in_progress") && (
                         <button onClick={() => setShowRollback(r.rollout_id)} className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/5 transition-colors">
                           <RefreshCw className="h-3 w-3" /> 回滚
                         </button>
@@ -640,9 +655,11 @@ const OpsCenter = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">告警 Webhook 配置</h2>
-              <button onClick={() => setShowNewWebhook(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                <Plus className="h-3.5 w-3.5" /> 添加 Webhook
-              </button>
+              {canOpsManage && (
+                <button onClick={() => setShowNewWebhook(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                  <Plus className="h-3.5 w-3.5" /> 添加 Webhook
+                </button>
+              )}
             </div>
             {webhooksLoading ? <LoadingState /> : (
               <div className="space-y-3">
@@ -680,8 +697,14 @@ const OpsCenter = () => {
       <FormDialog open={showNewIncident} onClose={() => { setShowNewIncident(false); setFormTitle(""); setFormDesc(""); setFormPriority("warn"); setFormSourceCode("manual"); }} title="创建工单"
         footer={<>
           <DialogButton onClick={() => setShowNewIncident(false)}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!formTitle || createTicketMutation.isPending}
-            onClick={() => createTicketMutation.mutate({ title: formTitle, severity: formPriority, description: formDesc || formTitle, source_code: formSourceCode })}>
+          <DialogButton variant="primary" disabled={!canOpsManage || !formTitle || createTicketMutation.isPending}
+            onClick={() => {
+              if (!canOpsManage) {
+                toastNoPermission("创建工单");
+                return;
+              }
+              createTicketMutation.mutate({ title: formTitle, severity: formPriority, description: formDesc || formTitle, source_code: formSourceCode });
+            }}>
             {createTicketMutation.isPending ? "创建中..." : "创建"}
           </DialogButton>
         </>}>
@@ -701,8 +724,12 @@ const OpsCenter = () => {
           <DialogButton onClick={() => setShowEditIncident(null)}>取消</DialogButton>
           <DialogButton
             variant="primary"
-            disabled={!showEditIncident || updateTicketMutation.isPending}
+            disabled={!canOpsManage || !showEditIncident || updateTicketMutation.isPending}
             onClick={() => {
+              if (!canOpsManage) {
+                toastNoPermission("更新工单");
+                return;
+              }
               if (!showEditIncident) return;
               updateTicketMutation.mutate({
                 ticketId: showEditIncident.ticket_id,
@@ -732,8 +759,12 @@ const OpsCenter = () => {
           <DialogButton onClick={() => setShowNewRollout(false)}>取消</DialogButton>
           <DialogButton
             variant="primary"
-            disabled={!rolloutVersion || createRolloutMutation.isPending}
+            disabled={!canOpsManage || !rolloutVersion || createRolloutMutation.isPending}
             onClick={() => {
+              if (!canOpsManage) {
+                toastNoPermission("创建发布");
+                return;
+              }
               let scopeObj: Record<string, unknown> = {};
               try {
                 scopeObj = rolloutScope.trim() ? JSON.parse(rolloutScope) : {};
@@ -776,7 +807,13 @@ const OpsCenter = () => {
 
       {/* Rollback Confirm */}
       <ConfirmDialog open={!!showRollback} onClose={() => setShowRollback(null)}
-        onConfirm={() => showRollback && rollbackMutation.mutate(showRollback)}
+        onConfirm={() => {
+          if (!canOpsManage) {
+            toastNoPermission("回滚发布");
+            return;
+          }
+          if (showRollback) rollbackMutation.mutate(showRollback);
+        }}
         title="确认回滚" message="确定回滚此发布？所有已更新的节点将恢复到上一个版本。"
         warning="此操作将影响所有已部署节点" variant="destructive" confirmLabel="确认回滚" />
 
@@ -784,8 +821,14 @@ const OpsCenter = () => {
       <FormDialog open={showNewWebhook} onClose={() => { setShowNewWebhook(false); setFormUrl(""); setFormWhName(""); }} title="添加 Webhook"
         footer={<>
           <DialogButton onClick={() => setShowNewWebhook(false)}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!formUrl || !formWhName || upsertWebhookMutation.isPending}
-            onClick={() => upsertWebhookMutation.mutate()}>
+          <DialogButton variant="primary" disabled={!canOpsManage || !formUrl || !formWhName || upsertWebhookMutation.isPending}
+            onClick={() => {
+              if (!canOpsManage) {
+                toastNoPermission("添加 Webhook");
+                return;
+              }
+              upsertWebhookMutation.mutate();
+            }}>
             {upsertWebhookMutation.isPending ? "添加中..." : "添加"}
           </DialogButton>
         </>}>

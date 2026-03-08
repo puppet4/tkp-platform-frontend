@@ -1,5 +1,17 @@
 import { useAuth } from "@/contexts/AuthContext";
 
+const ROUTE_REQUIRED_ACTIONS: Record<string, string[]> = {
+  "/": ["api.tenant.read"],
+  "/resources": ["api.workspace.read"],
+  "/search": ["api.retrieval.query"],
+  "/chat": ["api.chat.completion"],
+  "/chat/feedback": ["api.chat.completion"],
+  "/agent": ["api.agent.run.read"],
+  "/ops": ["api.tenant.member.manage"],
+  "/governance": ["api.tenant.member.manage"],
+  "/settings": ["api.user.read"],
+};
+
 export function useRoleAccess() {
   const { uiManifest } = useAuth();
 
@@ -11,8 +23,14 @@ export function useRoleAccess() {
   const canViewNav = (navPath: string) => {
     if (!uiManifest) return true; // Manifest not loaded yet, show all
     const menuItem = uiManifest.menus.find((m) => m.code === navPath || m.code === `menu.${navPath.replace(/^\//, "")}`);
-    if (!menuItem) return true; // Not in manifest → show by default
-    return menuItem.allowed;
+    if (menuItem) return menuItem.allowed;
+
+    const requiredActions = ROUTE_REQUIRED_ACTIONS[navPath] ?? [];
+    if (requiredActions.length > 0) {
+      return requiredActions.every((action) => allowedActions.includes(action));
+    }
+
+    return true; // Not in manifest and no explicit fallback rules
   };
 
   const canAction = (action: string) => hasPermission(action);

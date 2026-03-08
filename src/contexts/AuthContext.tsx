@@ -53,6 +53,7 @@ interface AuthContextType {
   workspaces: WorkspaceAccessItem[];
   uiManifest: PermissionUIManifestData | null;
   loading: boolean;
+  refreshPermissions: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName?: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -68,6 +69,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceAccessItem[]>([]);
   const [uiManifest, setUiManifest] = useState<PermissionUIManifestData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const refreshPermissions = useCallback(async () => {
+    try {
+      const manifest = await permissionsApi.uiManifest();
+      setUiManifest(manifest);
+    } catch {
+      // permissions endpoint may fail if no tenant context yet
+    }
+  }, []);
 
   // Fetch /auth/me + /permissions/ui-manifest
   const fetchIdentity = useCallback(async () => {
@@ -85,18 +95,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // Fetch UI manifest for permission-driven UI
-      try {
-        const manifest = await permissionsApi.uiManifest();
-        setUiManifest(manifest);
-      } catch {
-        // permissions endpoint may fail if no tenant context yet
-      }
+      await refreshPermissions();
     } catch {
       // Token invalid / expired
       clearToken();
       setUser(null);
     }
-  }, []);
+  }, [refreshPermissions]);
 
   // On mount: try to restore session from token
   useEffect(() => {
@@ -153,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         workspaces,
         uiManifest,
         loading,
+        refreshPermissions,
         login,
         register,
         logout,

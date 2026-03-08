@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   FolderTree,
+  Building2,
   Search,
   MessageSquare,
   Shield,
@@ -36,6 +37,7 @@ const mainNav = [
 ];
 
 const adminNav = [
+  { title: "租户管理", url: "/tenant", icon: Building2 },
   { title: "权限与治理", url: "/governance", icon: Shield },
   { title: "运营中心", url: "/ops", icon: Activity },
   { title: "Agent 任务", url: "/agent", icon: Bot },

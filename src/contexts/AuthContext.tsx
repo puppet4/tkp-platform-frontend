@@ -55,6 +55,7 @@ interface AuthContextType {
   loading: boolean;
   refreshPermissions: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
+  completeMfaLogin: (challengeToken: string, payload: { otp_code?: string; backup_code?: string }) => Promise<void>;
   register: (email: string, password: string, displayName?: string) => Promise<void>;
   logout: () => Promise<void>;
   switchTenant: (tenantId: string) => Promise<void>;
@@ -120,6 +121,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchIdentity();
   };
 
+  const completeMfaLogin = async (challengeToken: string, payload: { otp_code?: string; backup_code?: string }) => {
+    const data = await authApi.loginMfa(challengeToken, payload);
+    setToken(data.access_token);
+    if (data.tenant_id) setCurrentTenantId(data.tenant_id);
+    await fetchIdentity();
+  };
+
   const register = async (email: string, password: string, displayName?: string) => {
     await authApi.register(email, password, displayName);
   };
@@ -160,6 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         refreshPermissions,
         login,
+        completeMfaLogin,
         register,
         logout,
         switchTenant,

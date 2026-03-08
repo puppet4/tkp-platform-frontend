@@ -1,21 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Globe, Palette, Settings as SettingsIcon, Shield, User, Bell, type LucideIcon } from "lucide-react";
+
 import { AppLayout } from "@/components/AppLayout";
-import { useAuth } from "@/contexts/AuthContext";
-import { authApi, setToken, usersApi, type UserPreferencesData } from "@/lib/api";
-import { Settings as SettingsIcon, User, Bell, Shield, Palette, Globe, type LucideIcon } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { authApi, usersApi, type UserPreferencesData } from "@/lib/api";
 
 type Tab = "profile" | "notifications" | "security" | "appearance" | "language";
-
 type TabItem = { id: Tab; label: string; icon: LucideIcon };
-
-type TwoFactorMode = "enable" | "disable";
 
 const defaultPreferences: UserPreferencesData = {
   theme: "light",
@@ -32,9 +30,19 @@ const defaultPreferences: UserPreferencesData = {
   },
 };
 
+const tabs: TabItem[] = [
+  { id: "profile", label: "个人资料", icon: User },
+  { id: "notifications", label: "通知偏好", icon: Bell },
+  { id: "security", label: "安全设置", icon: Shield },
+  { id: "appearance", label: "外观", icon: Palette },
+  { id: "language", label: "语言与区域", icon: Globe },
+];
+
 const Settings = () => {
+  const qc = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
+
   const [tab, setTab] = useState<Tab>("profile");
   const [displayName, setDisplayName] = useState(user?.display_name || "");
   const [email] = useState(user?.email || "");
@@ -44,9 +52,6 @@ const Settings = () => {
   const [notifyAlerts, setNotifyAlerts] = useState(true);
 
   const [passwordResetEmail, setPasswordResetEmail] = useState(true);
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
-  const [twoFactorMode, setTwoFactorMode] = useState<TwoFactorMode | null>(null);
-  const [twoFactorPassword, setTwoFactorPassword] = useState("");
 
   const [theme, setTheme] = useState<"light" | "dark">(
     document.documentElement.classList.contains("dark") ? "dark" : "light",
@@ -54,10 +59,28 @@ const Settings = () => {
   const [language, setLanguage] = useState("zh-CN");
   const [timezone, setTimezone] = useState("Asia/Shanghai");
 
+  const [setupPassword, setSetupPassword] = useState("");
+  const [totpSecret, setTotpSecret] = useState("");
+  const [totpUri, setTotpUri] = useState("");
+  const [enableCode, setEnableCode] = useState("");
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+
+  const [disablePassword, setDisablePassword] = useState("");
+  const [disableUseBackup, setDisableUseBackup] = useState(false);
+  const [disableOtpCode, setDisableOtpCode] = useState("");
+  const [disableBackupCode, setDisableBackupCode] = useState("");
+
   const { data: preferences, isLoading: prefsLoading } = useQuery({
     queryKey: ["user-preferences", user?.id],
     enabled: !!user?.id,
     queryFn: () => usersApi.getPreferences(user!.id),
+    retry: false,
+  });
+
+  const { data: mfaStatus, isLoading: mfaLoading } = useQuery({
+    queryKey: ["mfa-totp-status", user?.id],
+    enabled: !!user?.id,
+    queryFn: () => authApi.mfaTotpStatus(),
     retry: false,
   });
 
@@ -84,7 +107,6 @@ const Settings = () => {
     setNotifyAlerts(Boolean(merged.notifications.alerts));
 
     setPasswordResetEmail(Boolean(merged.security?.password_reset_email));
-    setTwoFactorEnabled(Boolean(merged.security?.two_factor_enabled));
 
     setTheme(merged.theme);
     setLanguage(merged.language || "zh-CN");
@@ -97,25 +119,64 @@ const Settings = () => {
   const updateProfileMutation = useMutation({
     mutationFn: ({ userId, name }: { userId: string; name: string }) => usersApi.update(userId, { display_name: name }),
     onSuccess: () => toast({ title: "个人资料已更新" }),
-    onError: (e: Error) => toast({ title: "保存失败", description: e.message, variant: "destructive" }),
+    onError: (error: Error) => toast({ title: "保存失败", description: error.message, variant: "destructive" }),
   });
 
   const savePreferencesMutation = useMutation({
     mutationFn: ({ userId, payload }: { userId: string; payload: UserPreferencesData }) =>
       usersApi.upsertPreferences(userId, payload),
     onSuccess: () => toast({ title: "设置已保存", description: "您的偏好已更新" }),
-    onError: (e: Error) => toast({ title: "保存失败", description: e.message, variant: "destructive" }),
+    onError: (error: Error) => toast({ title: "保存失败", description: error.message, variant: "destructive" }),
   });
 
-  const tabs: TabItem[] = [
-    { id: "profile", label: "个人资料", icon: User },
-    { id: "notifications", label: "通知偏好", icon: Bell },
-    { id: "security", label: "安全设置", icon: Shield },
-    { id: "appearance", label: "外观", icon: Palette },
-    { id: "language", label: "语言与区域", icon: Globe },
-  ];
+  const setupTotpMutation = useMutation({
+    mutationFn: (password: string) => authApi.mfaTotpSetup(password),
+    onSuccess: (data) => {
+      setTotpSecret(data.secret);
+      setTotpUri(data.otpauth_uri);
+      setEnableCode("");
+      setBackupCodes([]);
+      toast({ title: "验证器初始化完成", description: "请在认证器中添加密钥并输入 6 位动态码启用" });
+    },
+    onError: (error: Error) => toast({ title: "初始化失败", description: error.message, variant: "destructive" }),
+  });
 
-  const buildPreferencesPayload = (overrideTwoFactor?: boolean): UserPreferencesData => ({
+  const enableTotpMutation = useMutation({
+    mutationFn: (code: string) => authApi.mfaTotpEnable(code),
+    onSuccess: async (data) => {
+      setBackupCodes(data.backup_codes || []);
+      setSetupPassword("");
+      setEnableCode("");
+      await qc.invalidateQueries({ queryKey: ["mfa-totp-status"] });
+      toast({ title: "TOTP 已启用", description: "请妥善保存恢复码" });
+    },
+    onError: (error: Error) => toast({ title: "启用失败", description: error.message, variant: "destructive" }),
+  });
+
+  const disableTotpMutation = useMutation({
+    mutationFn: (payload: { password: string; otp_code?: string; backup_code?: string }) => authApi.mfaTotpDisable(payload),
+    onSuccess: async () => {
+      setDisablePassword("");
+      setDisableOtpCode("");
+      setDisableBackupCode("");
+      setDisableUseBackup(false);
+      setTotpSecret("");
+      setTotpUri("");
+      setBackupCodes([]);
+      await qc.invalidateQueries({ queryKey: ["mfa-totp-status"] });
+      toast({ title: "TOTP 已停用" });
+    },
+    onError: (error: Error) => toast({ title: "停用失败", description: error.message, variant: "destructive" }),
+  });
+
+  const twoFactorEnabled = Boolean(mfaStatus?.enabled);
+
+  const effectiveTwoFactorFlag = useMemo(
+    () => (mfaStatus?.enabled ?? preferences?.security?.two_factor_enabled ?? false),
+    [mfaStatus?.enabled, preferences?.security?.two_factor_enabled],
+  );
+
+  const buildPreferencesPayload = (): UserPreferencesData => ({
     theme,
     language,
     timezone,
@@ -126,7 +187,7 @@ const Settings = () => {
     },
     security: {
       password_reset_email: passwordResetEmail,
-      two_factor_enabled: overrideTwoFactor ?? twoFactorEnabled,
+      two_factor_enabled: Boolean(effectiveTwoFactorFlag),
     },
   });
 
@@ -143,55 +204,10 @@ const Settings = () => {
     updateProfileMutation.mutate({ userId: user.id, name: displayName.trim() });
   };
 
-  const applyTheme = (t: "light" | "dark") => {
-    setTheme(t);
-    if (t === "dark") document.documentElement.classList.add("dark");
+  const applyTheme = (nextTheme: "light" | "dark") => {
+    setTheme(nextTheme);
+    if (nextTheme === "dark") document.documentElement.classList.add("dark");
     else document.documentElement.classList.remove("dark");
-  };
-
-  const startTwoFactorFlow = (mode: TwoFactorMode) => {
-    setTwoFactorMode(mode);
-    setTwoFactorPassword("");
-  };
-
-  const cancelTwoFactorFlow = () => {
-    setTwoFactorMode(null);
-    setTwoFactorPassword("");
-  };
-
-  const confirmTwoFactorFlow = async () => {
-    if (!twoFactorMode || !user?.id) return;
-    if (!user.email || !twoFactorPassword.trim()) {
-      toast({ title: "请输入当前密码", variant: "destructive" });
-      return;
-    }
-
-    try {
-      // Re-authenticate with backend before changing security settings.
-      const authData = await authApi.login(user.email, twoFactorPassword);
-      setToken(authData.access_token);
-    } catch (e) {
-      toast({ title: "身份验证失败", description: (e as Error).message, variant: "destructive" });
-      return;
-    }
-
-    const nextEnabled = twoFactorMode === "enable";
-    savePreferencesMutation.mutate(
-      {
-        userId: user.id,
-        payload: buildPreferencesPayload(nextEnabled),
-      },
-      {
-        onSuccess: () => {
-          setTwoFactorEnabled(nextEnabled);
-          toast({ title: nextEnabled ? "2FA 已启用" : "2FA 已停用" });
-          cancelTwoFactorFlow();
-        },
-        onError: (e: Error) => {
-          toast({ title: "2FA 状态保存失败", description: e.message, variant: "destructive" });
-        },
-      },
-    );
   };
 
   return (
@@ -205,21 +221,23 @@ const Settings = () => {
           </div>
         </div>
 
-        {prefsLoading && <div className="text-sm text-muted-foreground mb-4">正在加载偏好设置...</div>}
+        {(prefsLoading || mfaLoading) && <div className="text-sm text-muted-foreground mb-4">正在加载设置...</div>}
 
         <div className="flex flex-col md:flex-row gap-6">
           <div className="md:w-48 shrink-0">
             <div className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
-              {tabs.map((t) => (
+              {tabs.map((item) => (
                 <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
+                  key={item.id}
+                  onClick={() => setTab(item.id)}
                   className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors whitespace-nowrap ${
-                    tab === t.id ? "bg-primary/5 text-primary font-medium" : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    tab === item.id
+                      ? "bg-primary/5 text-primary font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                   }`}
                 >
-                  <t.icon className="h-4 w-4 shrink-0" />
-                  {t.label}
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  {item.label}
                 </button>
               ))}
             </div>
@@ -278,6 +296,7 @@ const Settings = () => {
             {tab === "security" && (
               <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-4">
                 <h2 className="text-sm font-semibold text-foreground">安全设置</h2>
+
                 <div className="flex items-center justify-between px-3 py-3 rounded-md border border-border">
                   <div>
                     <div className="text-sm font-medium text-foreground">密码重置提醒</div>
@@ -287,43 +306,138 @@ const Settings = () => {
                 </div>
 
                 <div className="px-3 py-3 rounded-md border border-border space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
-                      <div className="text-sm font-medium text-foreground">双因素认证（2FA）</div>
+                      <div className="text-sm font-medium text-foreground">双因素认证（TOTP）</div>
                       <div className="text-[11px] text-muted-foreground">
-                        当前状态：{twoFactorEnabled ? "已启用" : "未启用"}
+                        当前状态：{twoFactorEnabled ? "已启用" : mfaStatus?.enrolled ? "已绑定未启用" : "未初始化"}
+                        {typeof mfaStatus?.backup_codes_remaining === "number" && (
+                          <span className="ml-2">恢复码剩余：{mfaStatus.backup_codes_remaining}</span>
+                        )}
                       </div>
                     </div>
-                    {twoFactorEnabled ? (
-                      <Button variant="outline" onClick={() => startTwoFactorFlow("disable")}>停用 2FA</Button>
-                    ) : (
-                      <Button onClick={() => startTwoFactorFlow("enable")}>启用 2FA</Button>
-                    )}
                   </div>
 
-                  {twoFactorMode && (
-                    <div className="p-3 rounded-md bg-secondary/50 border border-border space-y-2">
-                      <div className="text-[12px] text-foreground">
-                        {twoFactorMode === "enable" ? "启用" : "停用"}验证进行中，请输入当前登录密码完成后端校验
-                      </div>
+                  {!twoFactorEnabled && (
+                    <div className="space-y-3 border border-border rounded-md p-3 bg-secondary/20">
+                      <div className="text-[12px] text-foreground font-medium">1) 初始化验证器</div>
                       <Input
                         type="password"
-                        value={twoFactorPassword}
-                        onChange={(e) => setTwoFactorPassword(e.target.value)}
-                        placeholder="输入当前密码"
+                        value={setupPassword}
+                        onChange={(e) => setSetupPassword(e.target.value)}
+                        placeholder="输入当前登录密码"
                       />
-                      <div className="flex items-center gap-2">
-                        <Button onClick={confirmTwoFactorFlow} disabled={!twoFactorPassword.trim() || savePreferencesMutation.isPending}>
-                          确认
-                        </Button>
-                        <Button variant="outline" onClick={cancelTwoFactorFlow}>取消</Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setupTotpMutation.mutate(setupPassword.trim())}
+                        disabled={!setupPassword.trim() || setupTotpMutation.isPending}
+                      >
+                        {setupTotpMutation.isPending ? "初始化中..." : "初始化 TOTP"}
+                      </Button>
+
+                      {totpSecret && (
+                        <div className="space-y-2 p-3 rounded-md border border-border bg-card">
+                          <div className="text-[12px] text-muted-foreground">请把以下密钥添加到认证器 App：</div>
+                          <code className="block text-xs break-all font-mono text-foreground">{totpSecret}</code>
+                          <div className="text-[11px] text-muted-foreground break-all">{totpUri}</div>
+                          <div className="pt-1">
+                            <Label className="text-[12px]">2) 输入认证器 6 位动态码以启用</Label>
+                            <Input
+                              value={enableCode}
+                              onChange={(e) => setEnableCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                              placeholder="6 位动态码"
+                              className="mt-1"
+                            />
+                            <Button
+                              className="mt-2"
+                              onClick={() => enableTotpMutation.mutate(enableCode)}
+                              disabled={enableCode.length !== 6 || enableTotpMutation.isPending}
+                            >
+                              {enableTotpMutation.isPending ? "启用中..." : "启用 TOTP"}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {backupCodes.length > 0 && (
+                        <div className="space-y-2 p-3 rounded-md border border-warning/30 bg-warning/5">
+                          <div className="text-[12px] font-medium text-foreground">恢复码（仅展示一次，请保存）</div>
+                          <div className="grid sm:grid-cols-2 gap-1.5">
+                            {backupCodes.map((item) => (
+                              <code key={item} className="text-[11px] px-2 py-1 rounded bg-card border border-border font-mono">
+                                {item}
+                              </code>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {twoFactorEnabled && (
+                    <div className="space-y-3 border border-border rounded-md p-3 bg-secondary/20">
+                      <div className="text-[12px] text-foreground font-medium">停用 TOTP</div>
+                      <Input
+                        type="password"
+                        value={disablePassword}
+                        onChange={(e) => setDisablePassword(e.target.value)}
+                        placeholder="输入当前登录密码"
+                      />
+
+                      <div className="flex items-center gap-2 text-[12px]">
+                        <button
+                          type="button"
+                          className={`px-2.5 py-1 rounded border ${disableUseBackup ? "border-border" : "border-primary text-primary"}`}
+                          onClick={() => setDisableUseBackup(false)}
+                        >
+                          动态码
+                        </button>
+                        <button
+                          type="button"
+                          className={`px-2.5 py-1 rounded border ${disableUseBackup ? "border-primary text-primary" : "border-border"}`}
+                          onClick={() => setDisableUseBackup(true)}
+                        >
+                          恢复码
+                        </button>
                       </div>
+
+                      {disableUseBackup ? (
+                        <Input
+                          value={disableBackupCode}
+                          onChange={(e) => setDisableBackupCode(e.target.value.toUpperCase())}
+                          placeholder="输入恢复码，如 ABCD-EFGH"
+                        />
+                      ) : (
+                        <Input
+                          value={disableOtpCode}
+                          onChange={(e) => setDisableOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          placeholder="输入 6 位动态码"
+                        />
+                      )}
+
+                      <Button
+                        variant="destructive"
+                        onClick={() =>
+                          disableTotpMutation.mutate({
+                            password: disablePassword.trim(),
+                            otp_code: disableUseBackup ? undefined : disableOtpCode,
+                            backup_code: disableUseBackup ? disableBackupCode.trim() : undefined,
+                          })
+                        }
+                        disabled={
+                          !disablePassword.trim() ||
+                          (disableUseBackup ? !disableBackupCode.trim() : disableOtpCode.length !== 6) ||
+                          disableTotpMutation.isPending
+                        }
+                      >
+                        {disableTotpMutation.isPending ? "停用中..." : "停用 TOTP"}
+                      </Button>
                     </div>
                   )}
                 </div>
 
                 <Button onClick={savePreferences} disabled={savePreferencesMutation.isPending}>
-                  {savePreferencesMutation.isPending ? "保存中..." : "保存安全设置"}
+                  {savePreferencesMutation.isPending ? "保存中..." : "保存安全偏好"}
                 </Button>
               </div>
             )}
@@ -364,7 +478,9 @@ const Settings = () => {
                 <div className="space-y-1.5">
                   <Label>界面语言</Label>
                   <Select value={language} onValueChange={setLanguage}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="zh-CN">简体中文</SelectItem>
                       <SelectItem value="en">English</SelectItem>
@@ -374,7 +490,9 @@ const Settings = () => {
                 <div className="space-y-1.5">
                   <Label>时区</Label>
                   <Select value={timezone} onValueChange={setTimezone}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="Asia/Shanghai">Asia/Shanghai (UTC+8)</SelectItem>
                       <SelectItem value="UTC">UTC (UTC+0)</SelectItem>

@@ -9,7 +9,9 @@ import {
   kbApi,
   opsApi,
   permissionsApi,
+  tenantApi,
   usersApi,
+  authApi,
 } from "@/lib/api";
 
 describe("api client base url", () => {
@@ -380,5 +382,128 @@ describe("api client base url", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body ?? "{}"))).toEqual({
       permission_codes: ["tenant.read", "chat.completion"],
     });
+  });
+
+  it("supports tenant member management endpoints", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-tenant-members",
+            data: [{ tenant_id: "t-1", user_id: "u-1", email: "a@example.com", role: "owner", status: "active" }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-tenant-invite",
+            data: { tenant_id: "t-1", user_id: "u-2", email: "b@example.com", role: "member", status: "invited" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-tenant-role",
+            data: { tenant_id: "t-1", user_id: "u-2", email: "b@example.com", role: "admin", status: "active" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const members = await tenantApi.listMembers("t-1");
+    expect(members.length).toBe(1);
+    await tenantApi.inviteMember("t-1", "b@example.com", "member");
+    await tenantApi.updateMemberRole("t-1", "u-2", "admin");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/tenants/t-1/members");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/tenants/t-1/invitations");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/tenants/t-1/members/u-2/role");
+  });
+
+  it("supports governance retention cleanup and pii masking", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-retention",
+            deleted_count: 0,
+            dry_run: true,
+            resource_type: "retrieval_logs",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-pii",
+            original_length: 10,
+            masked_text: "a***@example.com",
+            masked_length: 14,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    await governanceApi.retentionCleanup("retrieval_logs", true);
+    const masked = await governanceApi.piiMask("a@example.com", ["email"]);
+    expect(masked.masked_text).toContain("***");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/governance/retention/cleanup");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/api/governance/pii/mask");
+  });
+
+  it("supports mfa setup/enable/disable and login second-step", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-mfa-setup",
+            data: { enrolled: true, enabled: false, secret: "ABCDEF123456", otpauth_uri: "otpauth://totp/test" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-mfa-enable",
+            data: { enabled: true, backup_codes: ["ABCD-EFGH"] },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-mfa-disable",
+            data: { enabled: false },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            request_id: "req-mfa-login",
+            data: { access_token: "token-x", expires_at: "2026-03-08T00:00:00Z", expires_in: 3600, tenant_id: "t-1" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const setup = await authApi.mfaTotpSetup("StrongPassw0rd!");
+    expect(setup.secret).toBe("ABCDEF123456");
+    await authApi.mfaTotpEnable("123456");
+    await authApi.mfaTotpDisable({ password: "StrongPassw0rd!", backup_code: "ABCD-EFGH" });
+    const login = await authApi.loginMfa("challenge-token", { otp_code: "123456" });
+    expect(login.access_token).toBe("token-x");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/auth/mfa/totp/setup");
+    expect(fetchMock.mock.calls[3]?.[0]).toBe("/api/auth/login/mfa");
   });
 });

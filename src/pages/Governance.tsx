@@ -19,7 +19,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
 
-type Tab = "permissions" | "deletion";
+type Tab = "permissions" | "retention" | "pii" | "deletion";
 
 const Governance = () => {
   const qc = useQueryClient();
@@ -40,9 +40,16 @@ const Governance = () => {
   const [selectedRole, setSelectedRole] = useState("");
   const [editingPermissionCodes, setEditingPermissionCodes] = useState<string[]>([]);
   const [permissionFilter, setPermissionFilter] = useState("");
+  const [retentionResourceType, setRetentionResourceType] = useState("retrieval_logs");
+  const [retentionDryRun, setRetentionDryRun] = useState(true);
+  const [piiText, setPiiText] = useState("");
+  const [piiTypes, setPiiTypes] = useState("email,phone,id_card");
+  const [piiMaskedText, setPiiMaskedText] = useState("");
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: "permissions", label: "权限中心", icon: Key },
+    { id: "retention", label: "数据保留", icon: RotateCcw },
+    { id: "pii", label: "PII 脱敏", icon: Shield },
     { id: "deletion", label: "删除治理", icon: Trash2 },
   ];
   const canManageTenant = canAction("api.tenant.member.manage");
@@ -54,7 +61,7 @@ const Governance = () => {
 
   useEffect(() => {
     if (tab === "permissions" && !canViewPermissionCenter) {
-      setTab("deletion");
+      setTab("retention");
     }
   }, [tab, canViewPermissionCenter]);
 
@@ -170,6 +177,31 @@ const Governance = () => {
       qc.invalidateQueries({ queryKey: ["governance-deletion-proofs"] });
       toast.success("删除已执行");
       setShowConfirm(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const retentionMutation = useMutation({
+    mutationFn: () => governanceApi.retentionCleanup(retentionResourceType, retentionDryRun),
+    onSuccess: (data) => {
+      const count = data.deleted_count ?? data.expired_count ?? 0;
+      toast.success(retentionDryRun ? `Dry-run 完成，预计处理 ${count} 条` : `清理完成，已处理 ${count} 条`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const piiMaskMutation = useMutation({
+    mutationFn: () =>
+      governanceApi.piiMask(
+        piiText,
+        piiTypes
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    onSuccess: (data) => {
+      setPiiMaskedText(data.masked_text);
+      toast.success("脱敏完成");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -334,6 +366,97 @@ const Governance = () => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {tab === "retention" && (
+          <div className="space-y-4">
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-3">
+              <h2 className="text-sm font-semibold text-foreground">数据保留策略清理</h2>
+              <p className="text-[12px] text-muted-foreground">
+                调用后端 `retention/cleanup` 接口，对过期数据执行 dry-run 或真实清理。
+              </p>
+              <FormField label="资源类型">
+                <FormSelect
+                  value={retentionResourceType}
+                  onChange={setRetentionResourceType}
+                  options={[
+                    { value: "retrieval_logs", label: "retrieval_logs" },
+                    { value: "chat_messages", label: "chat_messages" },
+                    { value: "feedback", label: "feedback" },
+                    { value: "documents", label: "documents" },
+                  ]}
+                />
+              </FormField>
+              <FormField label="执行模式">
+                <FormSelect
+                  value={retentionDryRun ? "dry_run" : "execute"}
+                  onChange={(v) => setRetentionDryRun(v === "dry_run")}
+                  options={[
+                    { value: "dry_run", label: "dry-run（仅预览）" },
+                    { value: "execute", label: "execute（实际清理）" },
+                  ]}
+                />
+              </FormField>
+              <button
+                onClick={() => {
+                  if (!canReviewDeletion) {
+                    toastNoPermission("执行数据清理");
+                    return;
+                  }
+                  retentionMutation.mutate();
+                }}
+                disabled={retentionMutation.isPending || !canReviewDeletion}
+                className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              >
+                {retentionMutation.isPending ? "执行中..." : "开始清理任务"}
+              </button>
+
+              {retentionMutation.data && (
+                <div className="p-3 rounded-md border border-border bg-secondary/30">
+                  <div className="text-[12px] text-muted-foreground mb-1">本次结果</div>
+                  <pre className="text-[11px] text-foreground overflow-auto max-h-56">
+                    {JSON.stringify(retentionMutation.data, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === "pii" && (
+          <div className="space-y-4">
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-3">
+              <h2 className="text-sm font-semibold text-foreground">PII 脱敏演练</h2>
+              <p className="text-[12px] text-muted-foreground">
+                对输入文本执行后端 `pii/mask` 脱敏，便于上线前验证敏感信息处理规则。
+              </p>
+              <FormField label="PII 类型（逗号分隔）" hint="示例：email,phone,id_card,name">
+                <FormInput value={piiTypes} onChange={setPiiTypes} />
+              </FormField>
+              <FormField label="原始文本" required>
+                <FormTextarea
+                  value={piiText}
+                  onChange={setPiiText}
+                  rows={6}
+                  placeholder="请输入待脱敏文本"
+                />
+              </FormField>
+              <button
+                onClick={() => piiMaskMutation.mutate()}
+                disabled={!piiText.trim() || piiMaskMutation.isPending}
+                className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              >
+                {piiMaskMutation.isPending ? "脱敏中..." : "执行脱敏"}
+              </button>
+
+              {piiMaskedText && (
+                <div className="p-3 rounded-md border border-border bg-secondary/30">
+                  <div className="text-[12px] text-muted-foreground mb-1">脱敏结果</div>
+                  <pre className="text-[12px] text-foreground whitespace-pre-wrap break-words">{piiMaskedText}</pre>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

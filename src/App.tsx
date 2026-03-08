@@ -16,6 +16,7 @@ const Governance = lazy(() => import("./pages/Governance"));
 const OpsCenter = lazy(() => import("./pages/OpsCenter"));
 const AgentRuns = lazy(() => import("./pages/AgentRuns"));
 const Settings = lazy(() => import("./pages/Settings"));
+const TenantAdmin = lazy(() => import("./pages/TenantAdmin"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -44,6 +45,7 @@ function AppRoutes() {
         <Route path="/governance" element={<ProtectedRoute><Governance /></ProtectedRoute>} />
         <Route path="/ops" element={<ProtectedRoute><OpsCenter /></ProtectedRoute>} />
         <Route path="/agent" element={<ProtectedRoute><AgentRuns /></ProtectedRoute>} />
+        <Route path="/tenant" element={<ProtectedRoute><TenantAdmin /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>

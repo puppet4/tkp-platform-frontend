@@ -7,6 +7,7 @@ const ROUTE_REQUIRED_ACTIONS: Record<string, string[]> = {
   "/chat": ["api.chat.completion"],
   "/chat/feedback": ["api.chat.completion"],
   "/agent": ["api.agent.run.read"],
+  "/tenant": ["api.tenant.read"],
   "/ops": ["api.tenant.member.manage"],
   "/governance": ["api.tenant.member.manage"],
   "/settings": ["api.user.read"],

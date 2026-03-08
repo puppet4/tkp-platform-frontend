@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ApiError } from "@/lib/api";
 
 const Login = () => {
-  const { login, register } = useAuth();
+  const { login, completeMfaLogin, register } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [isLogin, setIsLogin] = useState(true);
@@ -18,6 +18,11 @@ const Login = () => {
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const [mfaChallengeToken, setMfaChallengeToken] = useState<string | null>(null);
+  const [mfaOtpCode, setMfaOtpCode] = useState("");
+  const [mfaBackupCode, setMfaBackupCode] = useState("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
 
   const validate = () => {
     const errs: Record<string, string> = {};
@@ -35,12 +40,33 @@ const Login = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
+
+    if (isLogin && mfaChallengeToken) {
+      const errs: Record<string, string> = {};
+      if (useBackupCode) {
+        if (!mfaBackupCode.trim()) errs.mfaBackupCode = "请输入恢复码";
+      } else if (!/^\d{6}$/.test(mfaOtpCode)) {
+        errs.mfaOtpCode = "请输入 6 位动态码";
+      }
+      setErrors(errs);
+      if (Object.keys(errs).length > 0) return;
+    } else if (!validate()) {
+      return;
+    }
+
     setLoading(true);
     try {
       if (isLogin) {
-        await login(email, password);
-        navigate("/");
+        if (mfaChallengeToken) {
+          await completeMfaLogin(
+            mfaChallengeToken,
+            useBackupCode ? { backup_code: mfaBackupCode.trim() } : { otp_code: mfaOtpCode.trim() },
+          );
+          navigate("/");
+        } else {
+          await login(email, password);
+          navigate("/");
+        }
       } else {
         await register(email, password, displayName || undefined);
         toast({ title: "注册成功", description: "请使用新账号登录" });
@@ -49,8 +75,23 @@ const Login = () => {
         setConfirmPwd("");
       }
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "操作失败，请稍后重试";
-      toast({ title: isLogin ? "登录失败" : "注册失败", description: msg, variant: "destructive" });
+      if (err instanceof ApiError && isLogin) {
+        const body = err.body as { code?: string; details?: Record<string, unknown> } | undefined;
+        const challenge = typeof body?.details?.challenge_token === "string" ? body.details.challenge_token : "";
+        if (body?.code === "LOGIN_MFA_REQUIRED" && challenge) {
+          setMfaChallengeToken(challenge);
+          setMfaOtpCode("");
+          setMfaBackupCode("");
+          setUseBackupCode(false);
+          setErrors({});
+          toast({ title: "需要二次验证", description: "请输入验证器动态码或恢复码完成登录" });
+        } else {
+          toast({ title: isLogin ? "登录失败" : "注册失败", description: err.message, variant: "destructive" });
+        }
+      } else {
+        const msg = err instanceof ApiError ? err.message : "操作失败，请稍后重试";
+        toast({ title: isLogin ? "登录失败" : "注册失败", description: msg, variant: "destructive" });
+      }
     } finally {
       setLoading(false);
     }
@@ -67,13 +108,11 @@ const Login = () => {
 
   return (
     <div className="min-h-screen bg-background flex relative overflow-hidden">
-      {/* Background decoration */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-1/2 -right-1/4 w-[600px] h-[600px] rounded-full bg-primary/[0.03] blur-3xl" />
         <div className="absolute -bottom-1/2 -left-1/4 w-[600px] h-[600px] rounded-full bg-accent/[0.03] blur-3xl" />
       </div>
 
-      {/* Left branding */}
       <div className="hidden lg:flex lg:w-[45%] items-center justify-center p-12 relative z-10">
         <div className="max-w-md">
           <div className="flex items-center gap-3 mb-8">
@@ -107,7 +146,6 @@ const Login = () => {
         </div>
       </div>
 
-      {/* Right form */}
       <div className="flex-1 flex items-center justify-center p-6 relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -126,36 +164,84 @@ const Login = () => {
             {isLogin ? (
               <motion.div key="login" variants={formVariants} initial="enter" animate="center" exit="exit" transition={{ duration: 0.2, ease: "easeInOut" }}>
                 <h3 className="text-xl font-semibold text-foreground mb-1.5">欢迎回来</h3>
-                <p className="text-sm text-muted-foreground mb-6">登录你的账号以继续</p>
+                <p className="text-sm text-muted-foreground mb-6">{mfaChallengeToken ? "请输入二次验证码完成登录" : "登录你的账号以继续"}</p>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1.5">邮箱</label>
-                    <input type="email" value={email} onChange={e => { setEmail(e.target.value); setErrors(p => ({ ...p, email: "" })); }}
-                      className={inputCls("email")} placeholder="name@company.com" />
-                    {errors.email && <p className="text-[11px] text-destructive mt-1">{errors.email}</p>}
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1.5">密码</label>
-                    <div className="relative">
-                      <input type={showPwd ? "text" : "password"} value={password} onChange={e => { setPassword(e.target.value); setErrors(p => ({ ...p, password: "" })); }}
-                        className={`${inputCls("password")} pr-10`} placeholder="请输入密码" />
-                      <button type="button" onClick={() => setShowPwd(!showPwd)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
-                        {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                    {errors.password && <p className="text-[11px] text-destructive mt-1">{errors.password}</p>}
-                  </div>
+                  {!mfaChallengeToken && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-1.5">邮箱</label>
+                        <input type="email" value={email} onChange={e => { setEmail(e.target.value); setErrors(p => ({ ...p, email: "" })); }}
+                          className={inputCls("email")} placeholder="name@company.com" />
+                        {errors.email && <p className="text-[11px] text-destructive mt-1">{errors.email}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-foreground mb-1.5">密码</label>
+                        <div className="relative">
+                          <input type={showPwd ? "text" : "password"} value={password} onChange={e => { setPassword(e.target.value); setErrors(p => ({ ...p, password: "" })); }}
+                            className={`${inputCls("password")} pr-10`} placeholder="请输入密码" />
+                          <button type="button" onClick={() => setShowPwd(!showPwd)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                            {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
+                        {errors.password && <p className="text-[11px] text-destructive mt-1">{errors.password}</p>}
+                      </div>
+                    </>
+                  )}
+
+                  {mfaChallengeToken && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <label className="block text-sm font-medium text-foreground">{useBackupCode ? "恢复码" : "动态码"}</label>
+                        <button type="button" className="text-[11px] text-primary hover:underline" onClick={() => {
+                          setUseBackupCode(v => !v);
+                          setErrors(p => ({ ...p, mfaOtpCode: "", mfaBackupCode: "" }));
+                        }}>
+                          {useBackupCode ? "改用动态码" : "改用恢复码"}
+                        </button>
+                      </div>
+                      {useBackupCode ? (
+                        <div>
+                          <input type="text" value={mfaBackupCode} onChange={(e) => { setMfaBackupCode(e.target.value.toUpperCase()); setErrors(p => ({ ...p, mfaBackupCode: "" })); }}
+                            className={inputCls("mfaBackupCode")} placeholder="如：ABCD-EFGH" />
+                          {errors.mfaBackupCode && <p className="text-[11px] text-destructive mt-1">{errors.mfaBackupCode}</p>}
+                        </div>
+                      ) : (
+                        <div>
+                          <input type="text" value={mfaOtpCode} onChange={(e) => { setMfaOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErrors(p => ({ ...p, mfaOtpCode: "" })); }}
+                            className={inputCls("mfaOtpCode")} placeholder="6 位验证码" />
+                          {errors.mfaOtpCode && <p className="text-[11px] text-destructive mt-1">{errors.mfaOtpCode}</p>}
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   <button type="submit" disabled={loading}
                     className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all duration-150 disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm">
-                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <>登录 <ArrowRight className="h-3.5 w-3.5" /></>}
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <>{mfaChallengeToken ? "验证并登录" : "登录"} <ArrowRight className="h-3.5 w-3.5" /></>}
                   </button>
+
+                  {mfaChallengeToken && (
+                    <button
+                      type="button"
+                      className="w-full h-10 rounded-xl border border-border text-sm font-medium hover:bg-secondary transition-colors"
+                      onClick={() => {
+                        setMfaChallengeToken(null);
+                        setMfaOtpCode("");
+                        setMfaBackupCode("");
+                        setUseBackupCode(false);
+                        setErrors({});
+                      }}
+                    >
+                      返回账号密码登录
+                    </button>
+                  )}
                 </form>
 
                 <p className="text-center text-sm text-muted-foreground mt-6">
                   还没有账号？{" "}
-                  <button onClick={() => { setIsLogin(false); setErrors({}); }} className="text-primary font-medium hover:underline underline-offset-4 transition-colors">
+                  <button onClick={() => { setIsLogin(false); setErrors({}); setMfaChallengeToken(null); }} className="text-primary font-medium hover:underline underline-offset-4 transition-colors">
                     立即注册
                   </button>
                 </p>

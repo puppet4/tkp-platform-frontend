@@ -107,6 +107,19 @@ export interface AuthLoginData {
   tenant_id?: string | null;
 }
 
+export interface MFATotpStatusData {
+  enrolled: boolean;
+  enabled: boolean;
+  backup_codes_remaining: number;
+}
+
+export interface MFATotpSetupData {
+  enrolled: boolean;
+  enabled: boolean;
+  secret: string;
+  otpauth_uri: string;
+}
+
 export interface AuthUserProfile {
   id: string;
   email: string;
@@ -192,6 +205,29 @@ export const authApi = {
   switchTenant(tenant_id: string) {
     return request<AuthLoginData>("POST", "/api/auth/switch-tenant", { tenant_id });
   },
+
+  mfaTotpStatus() {
+    return request<MFATotpStatusData>("GET", "/api/auth/mfa/totp/status");
+  },
+
+  mfaTotpSetup(password: string) {
+    return request<MFATotpSetupData>("POST", "/api/auth/mfa/totp/setup", { password });
+  },
+
+  mfaTotpEnable(code: string) {
+    return request<{ enabled: boolean; backup_codes: string[] }>("POST", "/api/auth/mfa/totp/enable", { code });
+  },
+
+  mfaTotpDisable(payload: { password: string; otp_code?: string; backup_code?: string }) {
+    return request<{ enabled: boolean }>("POST", "/api/auth/mfa/totp/disable", payload);
+  },
+
+  loginMfa(challengeToken: string, payload: { otp_code?: string; backup_code?: string }) {
+    return request<AuthLoginData>("POST", "/api/auth/login/mfa", {
+      challenge_token: challengeToken,
+      ...payload,
+    }, false);
+  },
 };
 
 // ─── Permissions API ─────────────────────────────────────────────
@@ -257,6 +293,22 @@ export interface UserPreferencesData {
   };
 }
 
+export interface TenantData {
+  tenant_id: string;
+  name: string;
+  slug: string;
+  role: string;
+  status: string;
+}
+
+export interface TenantMemberData {
+  tenant_id: string;
+  user_id: string;
+  email: string;
+  role: string;
+  status: string;
+}
+
 export const usersApi = {
   list() {
     return request<TenantUserData[]>("GET", "/api/users");
@@ -272,6 +324,43 @@ export const usersApi = {
   },
   upsertPreferences(userId: string, data: UserPreferencesData) {
     return request<UserPreferencesData>("PUT", `/api/users/${userId}/preferences`, data);
+  },
+};
+
+export const tenantApi = {
+  list() {
+    return request<TenantData[]>("GET", "/api/tenants");
+  },
+  get(tenantId: string) {
+    return request<TenantData>("GET", `/api/tenants/${tenantId}`);
+  },
+  update(tenantId: string, data: { name?: string; slug?: string; status?: string }) {
+    return request<TenantData>("PATCH", `/api/tenants/${tenantId}`, data);
+  },
+  listInvitations() {
+    return request<TenantData[]>("GET", "/api/tenants/invitations");
+  },
+  join(tenantId: string) {
+    return request<TenantMemberData>("POST", `/api/tenants/${tenantId}/join`);
+  },
+  listMembers(tenantId: string) {
+    return request<TenantMemberData[]>("GET", `/api/tenants/${tenantId}/members`);
+  },
+  inviteMember(tenantId: string, email: string, role: string) {
+    return request<TenantMemberData>("POST", `/api/tenants/${tenantId}/invitations`, { email, role });
+  },
+  upsertMember(tenantId: string, email: string, role: string) {
+    return request<TenantMemberData>("POST", `/api/tenants/${tenantId}/members`, { email, role });
+  },
+  updateMemberRole(tenantId: string, userId: string, role: string) {
+    return request<TenantMemberData>(
+      "PUT",
+      `/api/tenants/${tenantId}/members/${encodeURIComponent(userId)}/role`,
+      { role },
+    );
+  },
+  removeMember(tenantId: string, userId: string) {
+    return request<TenantMemberData>("DELETE", `/api/tenants/${tenantId}/members/${encodeURIComponent(userId)}`);
   },
 };
 
@@ -795,6 +884,21 @@ export interface DeletionProofData {
   [key: string]: unknown;
 }
 
+export interface RetentionCleanupData {
+  resource_type: string;
+  dry_run: boolean;
+  expired_count?: number;
+  deleted_count?: number;
+  archived_count?: number;
+  [key: string]: unknown;
+}
+
+export interface PIIMaskData {
+  original_length: number;
+  masked_text: string;
+  masked_length: number;
+}
+
 // ─── Governance API ──────────────────────────────────────────────
 export const governanceApi = {
   listDeletionRequests(params?: { status?: string; limit?: number; offset?: number }) {
@@ -846,6 +950,18 @@ export const governanceApi = {
         proof_hash: proof.proof_hash,
       },
     }));
+  },
+  retentionCleanup(resourceType: string, dryRun = true) {
+    const qs = new URLSearchParams();
+    qs.set("resource_type", resourceType);
+    qs.set("dry_run", String(dryRun));
+    return request<RetentionCleanupData>("POST", `/api/governance/retention/cleanup?${qs.toString()}`);
+  },
+  piiMask(text: string, piiTypes?: string[]) {
+    const qs = new URLSearchParams();
+    qs.set("text", text);
+    (piiTypes ?? []).forEach((item) => qs.append("pii_types", item));
+    return request<PIIMaskData>("POST", `/api/governance/pii/mask?${qs.toString()}`);
   },
 };
 
@@ -947,6 +1063,123 @@ export interface RetrievalQualityData {
   [key: string]: unknown;
 }
 
+export interface IngestionMetricsData {
+  queued: number;
+  processing: number;
+  retrying: number;
+  completed: number;
+  dead_letter: number;
+  backlog_total: number;
+  completed_last_window: number;
+  dead_letter_last_window: number;
+  failure_rate_last_window: number;
+  avg_latency_ms_last_window?: number | null;
+  p95_latency_ms_last_window?: number | null;
+  stale_processing_jobs: number;
+  [key: string]: unknown;
+}
+
+export interface QuotaPolicyData {
+  id: string;
+  scope_type: string;
+  scope_id: string;
+  metric_code: string;
+  limit_value: number;
+  window_minutes: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface QuotaAlertData {
+  alert_id: string;
+  metric_code: string;
+  scope_type: string;
+  scope_id: string;
+  limit_value: number;
+  used_value: number;
+  projected_value: number;
+  window_minutes: number;
+  created_at: string;
+  [key: string]: unknown;
+}
+
+export interface RetrievalEvalSampleData {
+  query: string;
+  expected_terms: string[];
+  matched: boolean;
+  hit_count: number;
+  citation_covered: boolean;
+  top_hit_score?: number | null;
+  latency_ms: number;
+}
+
+export interface RetrievalEvalRunData {
+  run_id: string;
+  name: string;
+  status: string;
+  sample_total: number;
+  matched_total: number;
+  hit_at_k: number;
+  citation_coverage_rate: number;
+  avg_latency_ms?: number | null;
+  created_at: string;
+}
+
+export interface RetrievalEvalRunDetailData extends RetrievalEvalRunData {
+  results: RetrievalEvalSampleData[];
+}
+
+export interface RetrievalEvalCompareData {
+  delta_hit_at_k?: number | null;
+  delta_citation_coverage_rate?: number | null;
+  delta_avg_latency_ms?: number | null;
+  improved: boolean;
+  baseline: RetrievalEvalRunDetailData;
+  current: RetrievalEvalRunDetailData;
+  [key: string]: unknown;
+}
+
+export interface AlertDispatchResultData {
+  event_type: string;
+  severity: string;
+  dry_run: boolean;
+  matched_webhook_total: number;
+  delivered_total: number;
+  results: Array<{
+    webhook_id: string;
+    name: string;
+    url: string;
+    status_code?: number | null;
+    delivered: boolean;
+    error?: string | null;
+    dry_run: boolean;
+  }>;
+}
+
+export interface SecurityBaselineData {
+  overall_status: string;
+  checks: Array<{ code: string; name: string; status: string; message: string }>;
+}
+
+export interface PublicSLAData {
+  version: string;
+  service_tier: string;
+  availability_sla: Record<string, unknown>;
+  support_sla: Record<string, unknown>;
+  slo: Array<Record<string, unknown>>;
+  updated_at: string;
+}
+
+export interface RunbookSummaryData {
+  version: string;
+  oncall: Record<string, unknown>;
+  playbooks: Array<Record<string, unknown>>;
+  documents: Array<Record<string, unknown>>;
+  updated_at: string;
+}
+
 interface IncidentTicketRawData {
   ticket_id: string;
   title: string;
@@ -1019,6 +1252,12 @@ export const opsApi = {
       })),
     }));
   },
+  ingestionMetrics(windowHours = 24, staleSeconds = 120) {
+    return request<IngestionMetricsData>(
+      "GET",
+      `/api/ops/ingestion/metrics?window_hours=${windowHours}&stale_seconds=${staleSeconds}`,
+    );
+  },
   sloSummary(windowHours = 24) {
     return request<{
       overall_status: string;
@@ -1055,6 +1294,40 @@ export const opsApi = {
       latency_p99_ms: raw.p95_latency_ms ?? 0,
       total_queries: raw.query_total,
     }));
+  },
+  evaluateRetrieval(data: { kb_ids?: string[]; top_k?: number; samples: Array<{ query: string; expected_terms?: string[] }> }) {
+    return request<{
+      sample_total: number;
+      matched_total: number;
+      hit_at_k: number;
+      citation_coverage_rate: number;
+      avg_latency_ms?: number | null;
+      results: RetrievalEvalSampleData[];
+    }>("POST", "/api/ops/retrieval/evaluate", data);
+  },
+  createEvalRun(data: { name: string; kb_ids?: string[]; top_k?: number; samples: Array<{ query: string; expected_terms?: string[] }> }) {
+    return request<RetrievalEvalRunDetailData>("POST", "/api/ops/retrieval/evaluate/runs", data);
+  },
+  listEvalRuns(limit = 20, offset = 0) {
+    return request<RetrievalEvalRunData[]>("GET", `/api/ops/retrieval/evaluate/runs?limit=${limit}&offset=${offset}`);
+  },
+  getEvalRun(runId: string) {
+    return request<RetrievalEvalRunDetailData>("GET", `/api/ops/retrieval/evaluate/runs/${runId}`);
+  },
+  compareEvalRuns(baselineRunId: string, currentRunId: string) {
+    const qs = new URLSearchParams();
+    qs.set("baseline_run_id", baselineRunId);
+    qs.set("current_run_id", currentRunId);
+    return request<RetrievalEvalCompareData>("GET", `/api/ops/retrieval/evaluate/compare?${qs.toString()}`);
+  },
+  upsertQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes: number; enabled?: boolean }) {
+    return request<QuotaPolicyData>("PUT", "/api/ops/quotas", data);
+  },
+  listQuotaPolicies() {
+    return request<QuotaPolicyData[]>("GET", "/api/ops/quotas");
+  },
+  listQuotaAlerts(windowHours = 24, limit = 20) {
+    return request<QuotaAlertData[]>(`GET`, `/api/ops/quotas/alerts?window_hours=${windowHours}&limit=${limit}`);
   },
   tenantHealth(windowHours = 24) {
     return request<Array<Record<string, unknown>>>("GET", `/api/ops/tenant-health?window_hours=${windowHours}`);
@@ -1111,6 +1384,20 @@ export const opsApi = {
   upsertWebhook(data: { name: string; url: string; event_types: string[]; enabled: boolean }) {
     return request<AlertWebhookData>("PUT", "/api/ops/alerts/webhooks", data);
   },
+  dispatchAlert(data: {
+    event_type: string;
+    severity: string;
+    title: string;
+    message: string;
+    attributes?: Record<string, unknown>;
+    dry_run?: boolean;
+  }) {
+    return request<AlertDispatchResultData>("POST", "/api/ops/alerts/dispatch", {
+      ...data,
+      attributes: data.attributes ?? {},
+      dry_run: data.dry_run ?? true,
+    });
+  },
   // Rollouts
   listRollouts(params?: { status?: string; limit?: number; offset?: number }) {
     const qs = new URLSearchParams();
@@ -1166,5 +1453,14 @@ export const opsApi = {
         details: item.proof_payload,
       })),
     );
+  },
+  securityBaseline() {
+    return request<SecurityBaselineData>("GET", "/api/ops/compliance/security-baseline");
+  },
+  publicSLA() {
+    return request<PublicSLAData>("GET", "/api/ops/sla/public");
+  },
+  runbook() {
+    return request<RunbookSummaryData>("GET", "/api/ops/runbook");
   },
 };

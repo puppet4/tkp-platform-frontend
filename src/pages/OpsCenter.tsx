@@ -18,7 +18,19 @@ import { PageTabs } from "@/components/PageTabs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
 
-type Tab = "overview" | "alerts" | "incidents" | "rollouts" | "quality" | "cost" | "webhooks";
+type Tab =
+  | "overview"
+  | "alerts"
+  | "ingestion"
+  | "incidents"
+  | "rollouts"
+  | "quality"
+  | "evaluation"
+  | "quotas"
+  | "dispatch"
+  | "compliance"
+  | "cost"
+  | "webhooks";
 
 const OpsCenter = () => {
   const qc = useQueryClient();
@@ -50,6 +62,25 @@ const OpsCenter = () => {
 
   const [formUrl, setFormUrl] = useState("");
   const [formWhName, setFormWhName] = useState("");
+
+  const [quotaMetricCode, setQuotaMetricCode] = useState("chat.completion");
+  const [quotaScopeType, setQuotaScopeType] = useState("tenant");
+  const [quotaScopeId, setQuotaScopeId] = useState("");
+  const [quotaLimit, setQuotaLimit] = useState("1000");
+  const [quotaWindowMinutes, setQuotaWindowMinutes] = useState("60");
+  const [quotaEnabled, setQuotaEnabled] = useState(true);
+
+  const [evalName, setEvalName] = useState("回归评测");
+  const [evalTopK, setEvalTopK] = useState("5");
+  const [evalSamples, setEvalSamples] = useState("问题1|关键词A,关键词B\n问题2|关键词C");
+  const [baselineRunId, setBaselineRunId] = useState("");
+  const [currentRunId, setCurrentRunId] = useState("");
+
+  const [dispatchEventType, setDispatchEventType] = useState("ops.alert.test");
+  const [dispatchSeverity, setDispatchSeverity] = useState("warn");
+  const [dispatchTitle, setDispatchTitle] = useState("联调告警演练");
+  const [dispatchMessage, setDispatchMessage] = useState("这是一次联调 dry-run");
+  const [dispatchDryRun, setDispatchDryRun] = useState(true);
   const canOpsManage = (roleName === "owner" || roleName === "admin") && canAction("api.tenant.member.manage");
 
   const toastNoPermission = (label: string) => {
@@ -121,6 +152,54 @@ const OpsCenter = () => {
     queryKey: ["ops-webhooks"],
     queryFn: () => opsApi.listWebhooks(),
     enabled: tab === "webhooks",
+  });
+
+  const { data: ingestionMetrics } = useQuery({
+    queryKey: ["ops-ingestion-metrics", windowHours],
+    queryFn: () => opsApi.ingestionMetrics(windowHours),
+    enabled: tab === "ingestion",
+  });
+
+  const { data: quotaPolicies = [], isLoading: quotaPoliciesLoading } = useQuery({
+    queryKey: ["ops-quota-policies"],
+    queryFn: () => opsApi.listQuotaPolicies(),
+    enabled: tab === "quotas",
+  });
+
+  const { data: quotaAlerts = [], isLoading: quotaAlertsLoading } = useQuery({
+    queryKey: ["ops-quota-alerts", windowHours],
+    queryFn: () => opsApi.listQuotaAlerts(windowHours, 20),
+    enabled: tab === "quotas",
+  });
+
+  const { data: evalRuns = [], isLoading: evalRunsLoading } = useQuery({
+    queryKey: ["ops-eval-runs"],
+    queryFn: () => opsApi.listEvalRuns(30, 0),
+    enabled: tab === "evaluation",
+  });
+
+  const { data: evalRunDetail } = useQuery({
+    queryKey: ["ops-eval-run-detail", currentRunId],
+    queryFn: () => opsApi.getEvalRun(currentRunId),
+    enabled: tab === "evaluation" && !!currentRunId,
+  });
+
+  const { data: securityBaseline } = useQuery({
+    queryKey: ["ops-security-baseline"],
+    queryFn: () => opsApi.securityBaseline(),
+    enabled: tab === "compliance",
+  });
+
+  const { data: publicSLA } = useQuery({
+    queryKey: ["ops-public-sla"],
+    queryFn: () => opsApi.publicSLA(),
+    enabled: tab === "compliance",
+  });
+
+  const { data: runbook } = useQuery({
+    queryKey: ["ops-runbook"],
+    queryFn: () => opsApi.runbook(),
+    enabled: tab === "compliance",
   });
 
   // ─── Mutations ─────────────────────────────────────────────────
@@ -216,12 +295,107 @@ const OpsCenter = () => {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const upsertQuotaMutation = useMutation({
+    mutationFn: () =>
+      opsApi.upsertQuotaPolicy({
+        metric_code: quotaMetricCode,
+        scope_type: quotaScopeType,
+        scope_id: quotaScopeId || undefined,
+        limit_value: Number(quotaLimit),
+        window_minutes: Number(quotaWindowMinutes),
+        enabled: quotaEnabled,
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["ops-quota-policies"] });
+      await qc.invalidateQueries({ queryKey: ["ops-quota-alerts"] });
+      toast.success("配额策略已保存");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const quickEvaluateMutation = useMutation({
+    mutationFn: () =>
+      opsApi.evaluateRetrieval({
+        top_k: Number(evalTopK) || 5,
+        samples: evalSamples
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [query, terms] = line.split("|");
+            return {
+              query: (query || "").trim(),
+              expected_terms: (terms || "")
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            };
+          })
+          .filter((item) => item.query),
+      }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const createEvalRunMutation = useMutation({
+    mutationFn: () =>
+      opsApi.createEvalRun({
+        name: evalName.trim() || "检索评测",
+        top_k: Number(evalTopK) || 5,
+        samples: evalSamples
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [query, terms] = line.split("|");
+            return {
+              query: (query || "").trim(),
+              expected_terms: (terms || "")
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            };
+          })
+          .filter((item) => item.query),
+      }),
+    onSuccess: async (run) => {
+      setCurrentRunId(run.run_id);
+      await qc.invalidateQueries({ queryKey: ["ops-eval-runs"] });
+      toast.success("评测运行已创建");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const compareEvalMutation = useMutation({
+    mutationFn: () => opsApi.compareEvalRuns(baselineRunId, currentRunId),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const dispatchAlertMutation = useMutation({
+    mutationFn: () =>
+      opsApi.dispatchAlert({
+        event_type: dispatchEventType,
+        severity: dispatchSeverity,
+        title: dispatchTitle,
+        message: dispatchMessage,
+        dry_run: dispatchDryRun,
+      }),
+    onSuccess: (data) => {
+      toast.success(`分发完成：命中 ${data.matched_webhook_total}，送达 ${data.delivered_total}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: "overview", label: "总览", icon: Activity },
     { id: "alerts", label: "告警", icon: Bell },
+    { id: "ingestion", label: "入库指标", icon: Activity },
     { id: "incidents", label: "工单", icon: Ticket },
     { id: "rollouts", label: "发布", icon: Rocket },
     { id: "quality", label: "检索质量", icon: BarChart3 },
+    { id: "evaluation", label: "检索评测", icon: BarChart3 },
+    { id: "quotas", label: "配额策略", icon: Activity },
+    { id: "dispatch", label: "告警分发", icon: Bell },
+    { id: "compliance", label: "安全与SLA", icon: CheckCircle },
     { id: "cost", label: "成本", icon: Activity },
     { id: "webhooks", label: "Webhook", icon: Webhook },
   ];
@@ -398,6 +572,34 @@ const OpsCenter = () => {
                   }`}>{rule.status}</span>
                 </div>
               ))}
+            </div>
+          ) : <LoadingState />
+        )}
+
+        {tab === "ingestion" && (
+          ingestionMetrics ? (
+            <div className="space-y-4">
+              <h2 className="text-sm font-semibold text-foreground">入库运行指标</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: "队列中", value: ingestionMetrics.queued },
+                  { label: "处理中", value: ingestionMetrics.processing },
+                  { label: "重试中", value: ingestionMetrics.retrying },
+                  { label: "积压总量", value: ingestionMetrics.backlog_total },
+                  { label: "完成数", value: ingestionMetrics.completed_last_window },
+                  { label: "死信数", value: ingestionMetrics.dead_letter_last_window },
+                  { label: "失败率", value: `${(ingestionMetrics.failure_rate_last_window * 100).toFixed(1)}%` },
+                  { label: "卡住任务", value: ingestionMetrics.stale_processing_jobs },
+                ].map((item) => (
+                  <div key={item.label} className="bg-card rounded-lg border border-border p-4 shadow-xs">
+                    <div className="text-[11px] text-muted-foreground font-medium">{item.label}</div>
+                    <div className="text-xl font-bold text-foreground mt-1">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-card rounded-lg border border-border p-4 shadow-xs text-[12px] text-muted-foreground">
+                avg latency: {ingestionMetrics.avg_latency_ms_last_window ?? 0}ms · p95 latency: {ingestionMetrics.p95_latency_ms_last_window ?? 0}ms
+              </div>
             </div>
           ) : <LoadingState />
         )}
@@ -590,6 +792,289 @@ const OpsCenter = () => {
               </div>
             </div>
           ) : <LoadingState />
+        )}
+
+        {tab === "evaluation" && (
+          <div className="space-y-4">
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-3">
+              <h2 className="text-sm font-semibold text-foreground">检索评测执行</h2>
+              <FormField label="评测名称">
+                <FormInput value={evalName} onChange={setEvalName} />
+              </FormField>
+              <FormField label="Top K">
+                <FormInput value={evalTopK} onChange={setEvalTopK} />
+              </FormField>
+              <FormField label="样本（每行：问题|关键词1,关键词2）">
+                <FormTextarea value={evalSamples} onChange={setEvalSamples} rows={5} />
+              </FormField>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => quickEvaluateMutation.mutate()}
+                  disabled={quickEvaluateMutation.isPending || !evalSamples.trim()}
+                  className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                >
+                  {quickEvaluateMutation.isPending ? "执行中..." : "快速评测"}
+                </button>
+                <button
+                  onClick={() => createEvalRunMutation.mutate()}
+                  disabled={createEvalRunMutation.isPending || !evalSamples.trim()}
+                  className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                >
+                  {createEvalRunMutation.isPending ? "创建中..." : "创建评测 Run"}
+                </button>
+              </div>
+            </div>
+
+            {quickEvaluateMutation.data && (
+              <div className="bg-card rounded-lg border border-border p-4 shadow-xs">
+                <h3 className="text-sm font-semibold text-foreground mb-2">快速评测结果</h3>
+                <pre className="text-[11px] text-foreground overflow-auto max-h-56">
+                  {JSON.stringify(quickEvaluateMutation.data, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-3">
+              <h3 className="text-sm font-semibold text-foreground">评测运行对比</h3>
+              {evalRunsLoading ? (
+                <div className="text-sm text-muted-foreground">加载中...</div>
+              ) : (
+                <>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <FormField label="基线 Run">
+                      <FormSelect
+                        value={baselineRunId}
+                        onChange={setBaselineRunId}
+                        options={[
+                          { value: "", label: "请选择" },
+                          ...evalRuns.map((run) => ({ value: run.run_id, label: `${run.name} (${run.run_id.slice(0, 8)})` })),
+                        ]}
+                      />
+                    </FormField>
+                    <FormField label="当前 Run">
+                      <FormSelect
+                        value={currentRunId}
+                        onChange={setCurrentRunId}
+                        options={[
+                          { value: "", label: "请选择" },
+                          ...evalRuns.map((run) => ({ value: run.run_id, label: `${run.name} (${run.run_id.slice(0, 8)})` })),
+                        ]}
+                      />
+                    </FormField>
+                  </div>
+                  <button
+                    onClick={() => compareEvalMutation.mutate()}
+                    disabled={!baselineRunId || !currentRunId || compareEvalMutation.isPending}
+                    className="text-[12px] px-3 py-2 rounded-md border border-border hover:bg-secondary disabled:opacity-40"
+                  >
+                    {compareEvalMutation.isPending ? "对比中..." : "对比两次评测"}
+                  </button>
+                  {compareEvalMutation.data && (
+                    <pre className="text-[11px] text-foreground overflow-auto max-h-56 border border-border rounded p-3 bg-secondary/20">
+                      {JSON.stringify(compareEvalMutation.data, null, 2)}
+                    </pre>
+                  )}
+                  {evalRunDetail && (
+                    <pre className="text-[11px] text-foreground overflow-auto max-h-56 border border-border rounded p-3 bg-secondary/20">
+                      {JSON.stringify(evalRunDetail, null, 2)}
+                    </pre>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === "quotas" && (
+          <div className="space-y-4">
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-3">
+              <h2 className="text-sm font-semibold text-foreground">配额策略维护</h2>
+              <div className="grid md:grid-cols-3 gap-3">
+                <FormField label="指标编码">
+                  <FormInput value={quotaMetricCode} onChange={setQuotaMetricCode} placeholder="chat.completion" />
+                </FormField>
+                <FormField label="作用域类型">
+                  <FormSelect
+                    value={quotaScopeType}
+                    onChange={setQuotaScopeType}
+                    options={[
+                      { value: "tenant", label: "tenant" },
+                      { value: "workspace", label: "workspace" },
+                      { value: "user", label: "user" },
+                    ]}
+                  />
+                </FormField>
+                <FormField label="作用域 ID（可选）">
+                  <FormInput value={quotaScopeId} onChange={setQuotaScopeId} />
+                </FormField>
+                <FormField label="限制值">
+                  <FormInput value={quotaLimit} onChange={setQuotaLimit} />
+                </FormField>
+                <FormField label="窗口分钟">
+                  <FormInput value={quotaWindowMinutes} onChange={setQuotaWindowMinutes} />
+                </FormField>
+                <FormField label="启用状态">
+                  <FormSelect
+                    value={quotaEnabled ? "true" : "false"}
+                    onChange={(v) => setQuotaEnabled(v === "true")}
+                    options={[
+                      { value: "true", label: "enabled" },
+                      { value: "false", label: "disabled" },
+                    ]}
+                  />
+                </FormField>
+              </div>
+              <button
+                onClick={() => upsertQuotaMutation.mutate()}
+                disabled={upsertQuotaMutation.isPending}
+                className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              >
+                {upsertQuotaMutation.isPending ? "保存中..." : "保存配额策略"}
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="bg-card rounded-lg border border-border p-5 shadow-xs">
+                <h3 className="text-sm font-semibold text-foreground mb-3">当前配额策略</h3>
+                {quotaPoliciesLoading ? (
+                  <div className="text-sm text-muted-foreground">加载中...</div>
+                ) : quotaPolicies.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">暂无策略</div>
+                ) : (
+                  <div className="space-y-2">
+                    {quotaPolicies.map((item) => (
+                      <div key={item.id} className="border border-border rounded-md p-3 text-[12px]">
+                        <div className="font-medium text-foreground">{item.metric_code}</div>
+                        <div className="text-muted-foreground">
+                          {item.scope_type}:{item.scope_id || "*"} · {item.limit_value}/{item.window_minutes}m · {item.enabled ? "enabled" : "disabled"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-card rounded-lg border border-border p-5 shadow-xs">
+                <h3 className="text-sm font-semibold text-foreground mb-3">配额超限告警</h3>
+                {quotaAlertsLoading ? (
+                  <div className="text-sm text-muted-foreground">加载中...</div>
+                ) : quotaAlerts.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">最近窗口内无超限告警</div>
+                ) : (
+                  <div className="space-y-2">
+                    {quotaAlerts.map((item) => (
+                      <div key={item.alert_id} className="border border-border rounded-md p-3 text-[12px]">
+                        <div className="font-medium text-foreground">{item.metric_code}</div>
+                        <div className="text-muted-foreground">
+                          {item.used_value}/{item.limit_value} · projected {item.projected_value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "dispatch" && (
+          <div className="space-y-4">
+            <div className="bg-card rounded-lg border border-border p-5 shadow-xs space-y-3">
+              <h2 className="text-sm font-semibold text-foreground">告警分发演练</h2>
+              <div className="grid md:grid-cols-2 gap-3">
+                <FormField label="事件类型">
+                  <FormInput value={dispatchEventType} onChange={setDispatchEventType} />
+                </FormField>
+                <FormField label="严重级别">
+                  <FormSelect
+                    value={dispatchSeverity}
+                    onChange={setDispatchSeverity}
+                    options={[
+                      { value: "info", label: "info" },
+                      { value: "warn", label: "warn" },
+                      { value: "critical", label: "critical" },
+                    ]}
+                  />
+                </FormField>
+                <FormField label="标题">
+                  <FormInput value={dispatchTitle} onChange={setDispatchTitle} />
+                </FormField>
+                <FormField label="模式">
+                  <FormSelect
+                    value={dispatchDryRun ? "dry_run" : "deliver"}
+                    onChange={(v) => setDispatchDryRun(v === "dry_run")}
+                    options={[
+                      { value: "dry_run", label: "dry_run" },
+                      { value: "deliver", label: "deliver" },
+                    ]}
+                  />
+                </FormField>
+              </div>
+              <FormField label="消息体">
+                <FormTextarea value={dispatchMessage} onChange={setDispatchMessage} rows={4} />
+              </FormField>
+              <button
+                onClick={() => dispatchAlertMutation.mutate()}
+                disabled={dispatchAlertMutation.isPending}
+                className="text-[12px] px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              >
+                {dispatchAlertMutation.isPending ? "分发中..." : "执行分发"}
+              </button>
+            </div>
+            {dispatchAlertMutation.data && (
+              <div className="bg-card rounded-lg border border-border p-4 shadow-xs">
+                <pre className="text-[11px] text-foreground overflow-auto max-h-56">
+                  {JSON.stringify(dispatchAlertMutation.data, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "compliance" && (
+          <div className="space-y-4">
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="bg-card rounded-lg border border-border p-4 shadow-xs">
+                <h3 className="text-sm font-semibold text-foreground mb-2">安全基线</h3>
+                {securityBaseline ? (
+                  <div className="space-y-1">
+                    <div className="text-[12px] text-muted-foreground">overall: {securityBaseline.overall_status}</div>
+                    <div className="text-[12px] text-muted-foreground">checks: {securityBaseline.checks?.length ?? 0}</div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">加载中...</div>
+                )}
+              </div>
+              <div className="bg-card rounded-lg border border-border p-4 shadow-xs">
+                <h3 className="text-sm font-semibold text-foreground mb-2">公开 SLA</h3>
+                {publicSLA ? (
+                  <div className="space-y-1">
+                    <div className="text-[12px] text-muted-foreground">tier: {publicSLA.service_tier}</div>
+                    <div className="text-[12px] text-muted-foreground">version: {publicSLA.version}</div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">加载中...</div>
+                )}
+              </div>
+              <div className="bg-card rounded-lg border border-border p-4 shadow-xs">
+                <h3 className="text-sm font-semibold text-foreground mb-2">Runbook</h3>
+                {runbook ? (
+                  <div className="space-y-1">
+                    <div className="text-[12px] text-muted-foreground">version: {runbook.version}</div>
+                    <div className="text-[12px] text-muted-foreground">playbooks: {runbook.playbooks?.length ?? 0}</div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">加载中...</div>
+                )}
+              </div>
+            </div>
+            <div className="bg-card rounded-lg border border-border p-4 shadow-xs">
+              <h3 className="text-sm font-semibold text-foreground mb-2">合规详情</h3>
+              <pre className="text-[11px] text-foreground overflow-auto max-h-72">
+                {JSON.stringify({ securityBaseline, publicSLA, runbook }, null, 2)}
+              </pre>
+            </div>
+          </div>
         )}
 
         {/* Cost */}

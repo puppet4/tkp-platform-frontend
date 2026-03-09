@@ -8,12 +8,12 @@ import { handleApiError } from "@/lib/error-handler";
 
 const PII = () => {
   const [piiText, setPiiText] = useState("");
-  const [piiTypes, setPiiTypes] = useState("email,phone,id_card");
+  const [piiTypes, setPiiTypes] = useState("email,phone_cn,id_card_cn");
   const [piiMaskedText, setPiiMaskedText] = useState("");
 
   const maskPiiMut = useMutation({
     mutationFn: (data: { text: string; pii_types?: string[] }) =>
-      governanceApi.maskPii(data.text, data.pii_types),
+      governanceApi.piiMask(data.text, data.pii_types),
     onSuccess: (data: any) => {
       setPiiMaskedText(data.masked_text || "");
       toast.success("PII 脱敏完成");
@@ -26,7 +26,15 @@ const PII = () => {
       toast.error("请输入待脱敏文本");
       return;
     }
-    const types = piiTypes.split(",").map((t) => t.trim()).filter(Boolean);
+    const typeAliasMap: Record<string, string> = {
+      phone: "phone_cn",
+      id_card: "id_card_cn",
+    };
+    const types = piiTypes
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .map((t) => typeAliasMap[t] || t);
     maskPiiMut.mutate({ text: piiText, pii_types: types.length > 0 ? types : undefined });
   };
 
@@ -50,11 +58,11 @@ const PII = () => {
               type="text"
               value={piiTypes}
               onChange={(e) => setPiiTypes(e.target.value)}
-              placeholder="email,phone,id_card"
+              placeholder="email,phone_cn,id_card_cn"
               className="w-full px-3 py-2 border rounded-md"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              支持的类型：email（邮箱）、phone（手机号）、id_card（身份证号）
+              支持的类型：email（邮箱）、phone_cn（手机号）、id_card_cn（身份证号）
             </p>
           </div>
 

@@ -82,7 +82,7 @@ describe("Governance page access control", () => {
     });
   });
 
-  it("hides permission-center tab when role lacks permission feature", () => {
+  it("shows deletion governance tab for non-admin role while keeping admin tabs hidden", () => {
     render(
       <MemoryRouter>
         <Governance />
@@ -90,9 +90,11 @@ describe("Governance page access control", () => {
     );
     expect(screen.queryByText("权限中心")).not.toBeInTheDocument();
     expect(screen.getByText("删除治理")).toBeInTheDocument();
+    expect(screen.queryByText("数据保留")).not.toBeInTheDocument();
+    expect(screen.queryByText("PII 脱敏")).not.toBeInTheDocument();
   });
 
-  it("shows permission-center tab for admin role even if feature/action flags are missing", () => {
+  it("shows all governance tabs for admin role even if feature/action flags are missing", () => {
     useRoleAccessMock.mockReturnValue({
       roleName: "admin",
       canAction: () => false,
@@ -105,5 +107,8 @@ describe("Governance page access control", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("权限中心")).toBeInTheDocument();
+    expect(screen.getByText("删除治理")).toBeInTheDocument();
+    expect(screen.getByText("数据保留")).toBeInTheDocument();
+    expect(screen.getByText("PII 脱敏")).toBeInTheDocument();
   });
 });

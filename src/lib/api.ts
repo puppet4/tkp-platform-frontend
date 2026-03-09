@@ -43,6 +43,16 @@ export class ApiError extends Error {
         if (errorObj.code) code = errorObj.code;
       } else if ("message" in body) {
         message = String((body as { message: unknown }).message);
+      } else if ("detail" in body) {
+        const detail = (body as { detail: unknown }).detail;
+        if (typeof detail === "string") {
+          message = detail;
+        } else if (Array.isArray(detail)) {
+          const first = detail[0] as { msg?: unknown } | undefined;
+          message = typeof first?.msg === "string" ? first.msg : "请求参数校验失败";
+        } else if (detail && typeof detail === "object" && "message" in detail) {
+          message = String((detail as { message: unknown }).message);
+        }
       }
     }
 
@@ -281,13 +291,21 @@ export const permissionsApi = {
     return request<PermissionSnapshotData>("GET", "/api/permissions/me");
   },
 
+  listPolicySnapshots(limit = 20, windowDays = 90) {
+    return request<PermissionPolicySnapshotData[]>("GET", `/api/permissions/policies/snapshots?limit=${limit}&window_days=${windowDays}`);
+  },
+
+  latestPolicySnapshot() {
+    return this.listPolicySnapshots(1, 90).then(snapshots => snapshots[0] || null);
+  },
+
   uiManifest() {
     return request<PermissionUIManifestData>("GET", "/api/permissions/ui-manifest");
   },
 
   catalog() {
     return request<{ permission_codes: string[] }>("GET", "/api/permissions/catalog").then(
-      (res) => res.permission_codes ?? [],
+      (res) => (res.permission_codes ?? []).map(code => ({ code, name: code, description: code })),
     );
   },
 
@@ -328,13 +346,6 @@ export const permissionsApi = {
     return request<PermissionPolicySnapshotData>("POST", "/api/permissions/policies/snapshots", {
       note,
     });
-  },
-
-  listPolicySnapshots(limit = 20, windowDays = 90) {
-    return request<PermissionPolicySnapshotData[]>(
-      "GET",
-      `/api/permissions/policies/snapshots?limit=${limit}&window_days=${windowDays}`,
-    );
   },
 
   rollbackPolicySnapshot(snapshotId: string) {
@@ -879,12 +890,13 @@ export const chatApi = {
     return request<{
       conversation_id: string;
       title: string;
+      created_at?: string;
       updated_at: string;
     }>("PATCH", `/api/chat/conversations/${id}`, { title }).then((item) => ({
       id: item.conversation_id,
       title: item.title,
       message_count: 0,
-      created_at: item.updated_at,
+      created_at: item.created_at || item.updated_at, // 后端暂未返回 created_at，使用 updated_at 作为 fallback
       updated_at: item.updated_at,
     }));
   },
@@ -1095,7 +1107,7 @@ export interface PIIMaskData {
 export const governanceApi = {
   listDeletionRequests(params?: { status?: string; limit?: number; offset?: number }) {
     const qs = new URLSearchParams();
-    if (params?.status) qs.set("status_filter", params.status);
+    if (params?.status) qs.set("status", params.status);
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     const q = qs.toString();
@@ -1105,7 +1117,12 @@ export const governanceApi = {
   createDeletionRequest(resourceType: string, resourceId: string, reason: string) {
     return request<DeletionRequestData>(
       "POST",
-      `/api/governance/deletion/requests?resource_type=${encodeURIComponent(resourceType)}&resource_id=${encodeURIComponent(resourceId)}&reason=${encodeURIComponent(reason)}`,
+      "/api/governance/deletion/requests",
+      {
+        resource_type: resourceType,
+        resource_id: resourceId,
+        reason: reason,
+      },
     );
   },
   approveDeletion(requestId: string) {
@@ -1114,8 +1131,12 @@ export const governanceApi = {
   rejectDeletion(requestId: string, reason: string) {
     return request<unknown>(
       "POST",
-      `/api/governance/deletion/requests/${requestId}/reject?reject_reason=${encodeURIComponent(reason)}`,
+      `/api/governance/deletion/requests/${requestId}/reject`,
+      { reason },
     );
+  },
+  cancelDeletion(requestId: string) {
+    return request<unknown>("POST", `/api/governance/deletion/requests/${requestId}/cancel`);
   },
   executeDeletion(requestId: string) {
     return request<unknown>("POST", `/api/governance/deletion/requests/${requestId}/execute`);
@@ -1148,6 +1169,21 @@ export const governanceApi = {
     qs.set("resource_type", resourceType);
     qs.set("dry_run", String(dryRun));
     return request<RetentionCleanupData>("POST", `/api/governance/retention/cleanup?${qs.toString()}`);
+  },
+  // Retention policies - 后端暂未实现持久化管理端点，避免返回伪成功占位数据
+  listRetentionPolicies() {
+    return Promise.reject(new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "保留策略列表接口暂未实现" } }));
+  },
+  createRetentionPolicy(resourceType: string, retentionDays: number) {
+    void resourceType;
+    void retentionDays;
+    return Promise.reject(new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "保留策略创建接口暂未实现" } }));
+  },
+  executeRetention() {
+    return Promise.reject(new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "保留策略执行接口暂未实现" } }));
+  },
+  cleanupExpiredData(resourceType: string, dryRun: boolean) {
+    return this.retentionCleanup(resourceType, dryRun);
   },
   piiMask(text: string, piiTypes?: string[]) {
     const qs = new URLSearchParams();
@@ -1728,13 +1764,16 @@ export const opsApi = {
     return merged.filter((item) => item.status === status);
   },
   acknowledgeAlert(alertId: string) {
+    // 后端暂未实现
     return Promise.resolve({ alert_id: alertId, status: "acknowledged" });
   },
   resolveAlert(alertId: string) {
+    // 后端暂未实现
     return Promise.resolve({ alert_id: alertId, status: "resolved" });
   },
   listIngestionJobs() {
-    return Promise.resolve([] as Array<{ job_id: string; status: string; kb_id: string; created_at: string }>);
+    // 后端暂未实现
+    return Promise.resolve([]);
   },
   // Incidents
   listIncidents() {

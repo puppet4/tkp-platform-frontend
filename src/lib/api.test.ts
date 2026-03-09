@@ -214,6 +214,22 @@ describe("api client base url", () => {
     expect((res as { request_id?: string }).request_id).toBe("dr-1");
   });
 
+  it("extracts message from FastAPI detail error response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: "deletion request not found",
+        }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await expect(governanceApi.executeDeletion("req-404")).rejects.toMatchObject({
+      status: 404,
+      message: "deletion request not found",
+    });
+  });
+
   it("maps create ticket payload to backend schema", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

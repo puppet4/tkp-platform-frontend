@@ -5,10 +5,10 @@ import { useRoleAccess } from "@/hooks/useRoleAccess";
 
 const Governance = () => {
   const navigate = useNavigate();
-  const { roleName, canFeature } = useRoleAccess();
+  const { roleName } = useRoleAccess();
 
   const isPermissionAdminRole = roleName === "owner" || roleName === "admin";
-  const canViewPermissionCenter = isPermissionAdminRole || canFeature("feature.auth.permissions");
+  const canCreateDeletionRequest = roleName.length > 0;
 
   const cards = [
     {
@@ -17,7 +17,7 @@ const Governance = () => {
       description: "管理租户角色权限和权限策略",
       icon: Key,
       path: "/governance/permissions",
-      visible: canViewPermissionCenter,
+      visible: isPermissionAdminRole,
     },
     {
       id: "retention",
@@ -25,7 +25,7 @@ const Governance = () => {
       description: "配置和执行数据保留策略",
       icon: RotateCcw,
       path: "/governance/retention",
-      visible: true,
+      visible: isPermissionAdminRole,
     },
     {
       id: "pii",
@@ -33,7 +33,7 @@ const Governance = () => {
       description: "对个人身份信息进行脱敏处理",
       icon: Shield,
       path: "/governance/pii",
-      visible: true,
+      visible: isPermissionAdminRole,
     },
     {
       id: "deletion",
@@ -41,7 +41,7 @@ const Governance = () => {
       description: "管理数据删除请求和删除证明",
       icon: Trash2,
       path: "/governance/deletion",
-      visible: true,
+      visible: canCreateDeletionRequest,
     },
   ];
 

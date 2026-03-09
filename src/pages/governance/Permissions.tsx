@@ -44,7 +44,7 @@ const Permissions = () => {
 
   const { data: runtimeSnapshot } = useQuery({
     queryKey: ["permission-runtime-snapshot"],
-    queryFn: () => permissionsApi.snapshot(),
+    queryFn: () => permissionsApi.latestPolicySnapshot(),
   });
 
   const { data: policyCenter } = useQuery({
@@ -64,7 +64,7 @@ const Permissions = () => {
   });
 
   const createSnapshotMut = useMutation({
-    mutationFn: (note: string) => permissionsApi.createSnapshot(note),
+    mutationFn: (note: string) => permissionsApi.createPolicySnapshot(note),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["permission-runtime-snapshot"] });
       toast.success("快照已创建");
@@ -225,8 +225,12 @@ const Permissions = () => {
           {runtimeSnapshot && (
             <div className="text-sm space-y-2">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">快照版本:</span>
-                <span className="font-mono">{runtimeSnapshot.snapshot_version}</span>
+                <span className="text-muted-foreground">快照ID:</span>
+                <span className="font-mono">{runtimeSnapshot.snapshot_id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">模板版本:</span>
+                <span className="font-mono">{runtimeSnapshot.template_version}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">创建时间:</span>

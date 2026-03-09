@@ -114,6 +114,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [fetchIdentity]);
 
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setInterval(() => {
+      refreshPermissions().catch(() => undefined);
+    }, 60_000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        refreshPermissions().catch(() => undefined);
+      }
+    };
+    window.addEventListener("focus", onVisibility);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onVisibility);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [user, refreshPermissions]);
+
   const login = async (email: string, password: string) => {
     const data = await authApi.login(email, password);
     setToken(data.access_token);

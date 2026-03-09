@@ -7,22 +7,22 @@ const ROUTE_REQUIRED_ACTIONS: Record<string, string[]> = {
   "/chat": ["api.chat.completion"],
   "/chat/feedback": ["api.chat.completion"],
   "/agent": ["api.agent.run.read"],
-  "/tenant": ["api.tenant.read"],
+  "/tenant": ["api.tenant.delete"],
   "/ops": ["api.tenant.member.manage"],
-  "/governance": ["api.tenant.read"],
+  "/governance": ["api.governance.deletion.request.create"],
   "/settings": ["api.user.read"],
 };
 
 export function useRoleAccess() {
-  const { uiManifest } = useAuth();
+  const { uiManifest, currentTenant } = useAuth();
 
-  const tenantRole = uiManifest?.tenant_role || "viewer";
+  const tenantRole = uiManifest?.tenant_role || currentTenant?.role || "viewer";
   const allowedActions = uiManifest?.allowed_actions || [];
 
   const hasPermission = (action: string) => allowedActions.includes(action);
 
   const canViewNav = (navPath: string) => {
-    if (!uiManifest) return true; // Manifest not loaded yet, show all
+    if (!uiManifest) return false; // Manifest not loaded, hide nav for safety
     const menuItem = uiManifest.menus.find((m) => m.code === navPath || m.code === `menu.${navPath.replace(/^\//, "")}`);
     if (menuItem) return menuItem.allowed;
 
@@ -37,13 +37,13 @@ export function useRoleAccess() {
   const canAction = (action: string) => hasPermission(action);
 
   const canButton = (code: string) => {
-    if (!uiManifest) return true;
+    if (!uiManifest) return false;
     const btn = uiManifest.buttons.find((b) => b.code === code);
     return btn ? btn.allowed : true;
   };
 
   const canFeature = (code: string) => {
-    if (!uiManifest) return true;
+    if (!uiManifest) return false;
     const feat = uiManifest.features.find((f) => f.code === code);
     return feat ? feat.allowed : true;
   };

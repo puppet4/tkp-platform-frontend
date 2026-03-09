@@ -48,12 +48,12 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 }
 
 function AdminRoute({ children, requiredRole = "admin" }: { children: ReactNode; requiredRole?: "admin" | "owner" }) {
-  const { isAuthenticated, loading, uiManifest } = useAuth();
+  const { isAuthenticated, loading, uiManifest, currentTenant } = useAuth();
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">加载中…</div>;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
-  const tenantRole = uiManifest?.tenant_role || "viewer";
+  const tenantRole = uiManifest?.tenant_role || currentTenant?.role || "viewer";
 
   // owner 可以访问所有页面
   if (tenantRole === "owner") return <>{children}</>;
@@ -84,12 +84,12 @@ function AppRoutes() {
         <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
         <Route path="/chat/feedback" element={<ProtectedRoute><Feedback /></ProtectedRoute>} />
 
-        {/* Governance - 需要 admin 权限 */}
-        <Route path="/governance" element={<AdminRoute><Governance /></AdminRoute>} />
+        {/* Governance - 删除请求支持普通登录用户提交，其他子页仍需管理员 */}
+        <Route path="/governance" element={<ProtectedRoute><Governance /></ProtectedRoute>} />
         <Route path="/governance/permissions" element={<AdminRoute><GovernancePermissions /></AdminRoute>} />
         <Route path="/governance/retention" element={<AdminRoute><GovernanceRetention /></AdminRoute>} />
         <Route path="/governance/pii" element={<AdminRoute><GovernancePII /></AdminRoute>} />
-        <Route path="/governance/deletion" element={<AdminRoute><GovernanceDeletion /></AdminRoute>} />
+        <Route path="/governance/deletion" element={<ProtectedRoute><GovernanceDeletion /></ProtectedRoute>} />
 
         {/* Ops - 需要 admin 权限 */}
         <Route path="/ops" element={<AdminRoute><OpsCenterNav /></AdminRoute>} />

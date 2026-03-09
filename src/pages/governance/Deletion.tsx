@@ -14,7 +14,7 @@ const Deletion = () => {
   const { roleName } = useRoleAccess();
 
   const [showDeleteReq, setShowDeleteReq] = useState(false);
-  const [showConfirm, setShowConfirm] = useState<{ type: "approve" | "reject" | "execute"; id: string } | null>(null);
+  const [showConfirm, setShowConfirm] = useState<{ type: "approve" | "reject" | "execute" | "cancel"; id: string } | null>(null);
   const [showProof, setShowProof] = useState<string | null>(null);
   const [proofData, setProofData] = useState<DeletionProofData | null>(null);
 
@@ -46,7 +46,7 @@ const Deletion = () => {
   });
 
   const approveReqMut = useMutation({
-    mutationFn: (id: string) => governanceApi.approveDeletionRequest(id),
+    mutationFn: (id: string) => governanceApi.approveDeletion(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["deletion-requests"] });
       toast.success("删除请求已批准");
@@ -57,7 +57,7 @@ const Deletion = () => {
 
   const rejectReqMut = useMutation({
     mutationFn: (data: { id: string; reason: string }) =>
-      governanceApi.rejectDeletionRequest(data.id, data.reason),
+      governanceApi.rejectDeletion(data.id, data.reason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["deletion-requests"] });
       toast.success("删除请求已拒绝");
@@ -67,8 +67,18 @@ const Deletion = () => {
     onError: (error) => toast.error(handleApiError(error)),
   });
 
+  const cancelReqMut = useMutation({
+    mutationFn: (id: string) => governanceApi.cancelDeletion(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["deletion-requests"] });
+      toast.success("删除请求已取消");
+      setShowConfirm(null);
+    },
+    onError: (error) => toast.error(handleApiError(error)),
+  });
+
   const executeReqMut = useMutation({
-    mutationFn: (id: string) => governanceApi.executeDeletionRequest(id),
+    mutationFn: (id: string) => governanceApi.executeDeletion(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["deletion-requests"] });
       toast.success("删除已执行");
@@ -114,6 +124,12 @@ const Deletion = () => {
   const handleExecute = () => {
     if (showConfirm?.type === "execute") {
       executeReqMut.mutate(showConfirm.id);
+    }
+  };
+
+  const handleCancel = () => {
+    if (showConfirm?.type === "cancel") {
+      cancelReqMut.mutate(showConfirm.id);
     }
   };
 
@@ -189,6 +205,12 @@ const Deletion = () => {
                             ? "bg-green-100 text-green-800"
                             : req.status === "rejected"
                             ? "bg-red-100 text-red-800"
+                            : req.status === "cancelled"
+                            ? "bg-gray-100 text-gray-800"
+                            : req.status === "expired"
+                            ? "bg-orange-100 text-orange-800"
+                            : req.status === "failed"
+                            ? "bg-red-100 text-red-800"
                             : "bg-gray-100 text-gray-800"
                         }`}
                       >
@@ -198,6 +220,14 @@ const Deletion = () => {
                           ? "已批准"
                           : req.status === "rejected"
                           ? "已拒绝"
+                          : req.status === "cancelled"
+                          ? "已取消"
+                          : req.status === "expired"
+                          ? "已过期"
+                          : req.status === "failed"
+                          ? "执行失败"
+                          : req.status === "completed"
+                          ? "已完成"
                           : req.status}
                       </span>
                       {canReviewDeletion && req.status === "pending" && (
@@ -224,6 +254,14 @@ const Deletion = () => {
                           className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
                         >
                           执行删除
+                        </button>
+                      )}
+                      {req.status === "pending" && (
+                        <button
+                          onClick={() => setShowConfirm({ type: "cancel", id: req.request_id })}
+                          className="px-3 py-1 text-sm border rounded hover:bg-muted"
+                        >
+                          取消请求
                         </button>
                       )}
                       {req.status === "completed" && req.proof_id && (
@@ -257,7 +295,7 @@ const Deletion = () => {
             >
               <option value="document">文档</option>
               <option value="conversation">对话</option>
-              <option value="knowledge_base">知识库</option>
+              <option value="user">用户</option>
             </FormSelect>
           </FormField>
           <FormField label="资源 ID">
@@ -334,6 +372,18 @@ const Deletion = () => {
             confirmText="执行删除"
             variant="destructive"
             loading={executeReqMut.isPending}
+          />
+        )}
+
+        {showConfirm?.type === "cancel" && (
+          <ConfirmDialog
+            open={true}
+            onOpenChange={() => setShowConfirm(null)}
+            title="取消删除请求"
+            description="确认取消此删除请求？取消后不能自动恢复。"
+            onConfirm={handleCancel}
+            confirmText="取消请求"
+            loading={cancelReqMut.isPending}
           />
         )}
 

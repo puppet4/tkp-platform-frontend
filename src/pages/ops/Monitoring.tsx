@@ -59,7 +59,7 @@ const Monitoring = () => {
   const criticalAlerts = alerts.filter((a: AlertData) => a.severity === "critical");
   const warningAlerts = alerts.filter((a: AlertData) => a.severity === "warning");
   const activeJobs = ingestionJobs.filter((j: any) => j.status === "processing");
-  const failedJobs = ingestionJobs.filter((j: any) => j.status === "failed");
+  const failedJobs = ingestionJobs.filter((j: any) => j.status === "dead_letter");
 
   return (
     <AppLayout>
@@ -84,6 +84,11 @@ const Monitoring = () => {
             <RefreshCw className="w-4 h-4" />
             刷新
           </button>
+        </div>
+
+        {/* Feature Incomplete Warning */}
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
+          <strong>功能提示：</strong>告警确认/解决和入库任务列表功能暂未完成后端实现，当前显示为占位数据。
         </div>
 
         {/* Alert Summary */}

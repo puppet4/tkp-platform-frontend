@@ -7,16 +7,22 @@ const rawApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const API_BASE = rawApiBase ? rawApiBase.replace(/\/+$/, "") : "";
 
 // ─── Token helpers ───────────────────────────────────────────────
+// WARNING: localStorage is vulnerable to XSS attacks. In production, consider:
+// 1. Using HttpOnly cookies for token storage
+// 2. Implementing Content Security Policy (CSP)
+// 3. Using secure, httpOnly cookies with SameSite attribute
+const TOKEN_KEY = "tkp_token";
+
 export function getToken(): string | null {
-  return localStorage.getItem("tkp_token");
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string) {
-  localStorage.setItem("tkp_token", token);
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
-  localStorage.removeItem("tkp_token");
+  localStorage.removeItem(TOKEN_KEY);
 }
 
 // ─── Generic fetcher ─────────────────────────────────────────────
@@ -693,6 +699,21 @@ export const documentApi = {
   reindex(docId: string) {
     return request<{ job_id: string; status: string }>("POST", `/api/documents/${docId}/reindex`);
   },
+  getIngestionStatus(docId: string) {
+    return request<{
+      document_id: string;
+      status: string;
+      current_version: number;
+      latest_job?: {
+        job_id: string;
+        status: string;
+        progress?: number;
+        error_message?: string;
+        created_at: string;
+        updated_at: string;
+      };
+    }>("GET", `/api/documents/${docId}/ingestion-status`);
+  },
   getIngestionJob(jobId: string) {
     return request<IngestionJobData>("GET", `/api/ingestion-jobs/${encodeURIComponent(jobId)}`);
   },
@@ -1170,17 +1191,44 @@ export const governanceApi = {
     qs.set("dry_run", String(dryRun));
     return request<RetentionCleanupData>("POST", `/api/governance/retention/cleanup?${qs.toString()}`);
   },
-  // Retention policies - 后端暂未实现持久化管理端点，避免返回伪成功占位数据
   listRetentionPolicies() {
-    return Promise.reject(new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "保留策略列表接口暂未实现" } }));
+    return request<{
+      policies: Array<{
+        resource_type: string;
+        retention_days: number;
+        auto_delete: boolean;
+        archive_before_delete: boolean;
+      }>;
+    }>("GET", "/api/governance/retention/policies");
   },
-  createRetentionPolicy(resourceType: string, retentionDays: number) {
-    void resourceType;
-    void retentionDays;
-    return Promise.reject(new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "保留策略创建接口暂未实现" } }));
+  createRetentionPolicy(resourceType: string, retentionDays: number, autoDelete = false, archiveBeforeDelete = false) {
+    const qs = new URLSearchParams();
+    qs.set("resource_type", resourceType);
+    qs.set("retention_days", String(retentionDays));
+    qs.set("auto_delete", String(autoDelete));
+    qs.set("archive_before_delete", String(archiveBeforeDelete));
+    return request<{
+      resource_type: string;
+      retention_days: number;
+      auto_delete: boolean;
+      archive_before_delete: boolean;
+    }>("POST", `/api/governance/retention/policies?${qs.toString()}`);
+  },
+  updateRetentionPolicy(resourceType: string, retentionDays: number, autoDelete = false, archiveBeforeDelete = false) {
+    const qs = new URLSearchParams();
+    qs.set("retention_days", String(retentionDays));
+    qs.set("auto_delete", String(autoDelete));
+    qs.set("archive_before_delete", String(archiveBeforeDelete));
+    return request<{
+      resource_type: string;
+      retention_days: number;
+      auto_delete: boolean;
+      archive_before_delete: boolean;
+    }>("PUT", `/api/governance/retention/policies/${encodeURIComponent(resourceType)}?${qs.toString()}`);
   },
   executeRetention() {
-    return Promise.reject(new ApiError(501, { error: { code: "NOT_IMPLEMENTED", message: "保留策略执行接口暂未实现" } }));
+    // 执行所有自动清理策略
+    return request<Record<string, unknown>>("POST", "/api/governance/retention/execute");
   },
   cleanupExpiredData(resourceType: string, dryRun: boolean) {
     return this.retentionCleanup(resourceType, dryRun);
@@ -1572,6 +1620,18 @@ export const opsApi = {
   upsertQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("PUT", "/api/ops/quotas", data);
   },
+  createQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_seconds?: number; enabled?: boolean }) {
+    return request<QuotaPolicyData>("POST", "/api/ops/quotas", {
+      ...data,
+      window_seconds: data.window_seconds ?? (data.window_minutes ?? 60) * 60,
+    });
+  },
+  updateQuotaPolicy(policyId: string, data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_seconds?: number; enabled?: boolean }) {
+    return request<QuotaPolicyData>("PUT", `/api/ops/quotas/${policyId}`, {
+      ...data,
+      window_seconds: data.window_seconds ?? (data.window_minutes ?? 60) * 60,
+    });
+  },
   listQuotaPolicies() {
     return request<QuotaPolicyData[]>("GET", "/api/ops/quotas");
   },
@@ -1637,6 +1697,9 @@ export const opsApi = {
   },
   upsertWebhook(data: { name: string; url: string; event_types: string[]; enabled: boolean }) {
     return request<AlertWebhookData>("PUT", "/api/ops/alerts/webhooks", data);
+  },
+  deleteWebhook(webhookId: string) {
+    return request<{ webhook_id: string; deleted: boolean }>("DELETE", `/api/ops/alerts/webhooks/${webhookId}`);
   },
   dispatchAlert(data: {
     event_type: string;
@@ -1764,16 +1827,30 @@ export const opsApi = {
     return merged.filter((item) => item.status === status);
   },
   acknowledgeAlert(alertId: string) {
-    // 后端暂未实现
-    return Promise.resolve({ alert_id: alertId, status: "acknowledged" });
+    return request<{ alert_id: string; status: string }>("POST", `/api/ops/alerts/${encodeURIComponent(alertId)}/acknowledge`);
   },
   resolveAlert(alertId: string) {
-    // 后端暂未实现
-    return Promise.resolve({ alert_id: alertId, status: "resolved" });
+    return request<{ alert_id: string; status: string }>("POST", `/api/ops/alerts/${encodeURIComponent(alertId)}/resolve`);
   },
-  listIngestionJobs() {
-    // 后端暂未实现
-    return Promise.resolve([]);
+  listIngestionJobs(statusFilter?: string, limit = 50, offset = 0) {
+    const qs = new URLSearchParams();
+    if (statusFilter) qs.set("status_filter", statusFilter);
+    qs.set("limit", String(limit));
+    qs.set("offset", String(offset));
+    return request<{
+      jobs: Array<{
+        job_id: string;
+        document_id: string;
+        status: string;
+        progress?: number;
+        error_message?: string;
+        created_at?: string;
+        updated_at?: string;
+      }>;
+      total: number;
+      limit: number;
+      offset: number;
+    }>("GET", `/api/ops/ingestion/jobs?${qs.toString()}`);
   },
   // Incidents
   listIncidents() {
@@ -1897,27 +1974,21 @@ export const opsApi = {
       window_type: item.window_minutes >= 43200 ? "monthly" : item.window_minutes >= 1440 ? "daily" : "total",
     }));
   },
-  async updateQuota(id: string, data: { limit_value: number }) {
-    const policies = await this.listQuotaPolicies();
-    const existing = policies.find((item) => item.id === id);
-    if (!existing) throw new Error("quota policy not found");
-    const updated = await this.upsertQuotaPolicy({
-      metric_code: existing.metric_code,
-      scope_type: existing.scope_type,
-      scope_id: existing.scope_id,
+  updateQuota(id: string, data: { limit_value: number }) {
+    return this.updateQuotaPolicy(id, {
+      metric_code: "",
+      scope_type: "",
+      scope_id: "",
       limit_value: data.limit_value,
-      window_minutes: existing.window_minutes,
-      enabled: existing.enabled,
-    });
-    return {
-      quota_id: updated.id,
+    }).then((updated) => ({
+      quota_id: updated.policy_id,
       metric_code: updated.metric_code,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       limit_value: updated.limit_value,
       current_usage: 0,
-      window_type: updated.window_minutes >= 43200 ? "monthly" : updated.window_minutes >= 1440 ? "daily" : "total",
-    };
+      window_type: updated.window_seconds >= 2592000 ? "monthly" : updated.window_seconds >= 86400 ? "daily" : "total",
+    }));
   },
   // Releases & Webhooks
   listReleases() {
@@ -1959,30 +2030,22 @@ export const opsApi = {
       events: item.event_types ?? data.events,
     }));
   },
-  async updateWebhook(id: string, data: { name?: string; url?: string; events?: string[] }) {
-    const webhooks = await this.listWebhooks();
-    const existing = webhooks.find((item) => item.webhook_id === id);
-    if (!existing) throw new Error("webhook not found");
-    const updated = await this.upsertWebhook({
-      name: data.name ?? existing.name,
-      url: data.url ?? existing.url,
-      event_types: data.events ?? existing.event_types ?? [],
-      enabled: existing.enabled,
+  updateWebhook(id: string, data: { name?: string; url?: string; events?: string[] }) {
+    return this.listWebhooks().then((webhooks) => {
+      const existing = webhooks.find((item) => item.webhook_id === id);
+      if (!existing) throw new Error("webhook not found");
+      return this.upsertWebhook({
+        name: data.name ?? existing.name,
+        url: data.url ?? existing.url,
+        event_types: data.events ?? existing.event_types ?? [],
+        enabled: existing.enabled,
+      }).then((updated) => ({
+        ...updated,
+        events: updated.event_types ?? data.events ?? [],
+      }));
     });
-    return {
-      ...updated,
-      events: updated.event_types ?? data.events ?? [],
-    };
   },
-  async deleteWebhook(id: string) {
-    const webhooks = await this.listWebhooks();
-    const existing = webhooks.find((item) => item.webhook_id === id);
-    if (!existing) return;
-    await this.upsertWebhook({
-      name: existing.name,
-      url: existing.url,
-      event_types: existing.event_types ?? [],
-      enabled: false,
-    });
+  deleteWebhook(webhookId: string) {
+    return request<{ webhook_id: string; deleted: boolean }>("DELETE", `/api/ops/alerts/webhooks/${webhookId}`);
   },
 };

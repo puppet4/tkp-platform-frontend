@@ -57,10 +57,21 @@ describe("Chat new conversation flow", () => {
       invalidateQueries: vi.fn(async () => undefined),
     });
 
-    useMutationMock.mockReturnValue({
-      mutate: vi.fn(),
+    useMutationMock.mockImplementation((options?: { onSuccess?: (data: unknown) => void }) => ({
+      mutate: (payload: unknown) => {
+        if (Array.isArray(payload)) {
+          options?.onSuccess?.({
+            id: "conv-new",
+            title: "新对话",
+            message_count: 0,
+            kb_ids: payload,
+            created_at: "2026-03-09T00:00:00Z",
+            updated_at: "2026-03-09T00:00:00Z",
+          });
+        }
+      },
       isPending: false,
-    });
+    }));
 
     useQueryMock.mockImplementation(({ queryKey }: { queryKey: string[] }) => {
       const key = queryKey[0];

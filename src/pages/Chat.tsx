@@ -39,7 +39,6 @@ const Chat = () => {
   const [streamText, setStreamText] = useState("");
   const [showNewConv, setShowNewConv] = useState(false);
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
-  const [isDraftConversation, setIsDraftConversation] = useState(false);
   const [showMobileList, setShowMobileList] = useState(false);
   const [showRenameConv, setShowRenameConv] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
@@ -84,10 +83,10 @@ const Chat = () => {
 
   // Auto-select first conversation
   useEffect(() => {
-    if (!selectedConvId && !isDraftConversation && conversations.length > 0) {
+    if (!selectedConvId && conversations.length > 0) {
       setSelectedConvId(conversations[0].id);
     }
-  }, [conversations, isDraftConversation, selectedConvId]);
+  }, [conversations, selectedConvId]);
 
   const selectedConv = conversations.find((c) => c.id === selectedConvId);
   const selectedConvView = convDetail || selectedConv;
@@ -100,7 +99,6 @@ const Chat = () => {
       if (selectedConvId === id) {
         setSelectedConvId(null);
         setMessages([]);
-        setIsDraftConversation(false);
       }
       toast.success("会话已删除");
     },
@@ -128,6 +126,19 @@ const Chat = () => {
       }),
     onSuccess: (_, vars) => {
       toast.success(vars.feedback_type === "thumbs_up" ? "已提交好评" : "已提交差评");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const createConvMutation = useMutation({
+    mutationFn: (kb_ids: string[]) => chatApi.createConversation({ kb_ids }),
+    onSuccess: (newConv) => {
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+      setSelectedConvId(newConv.id);
+      setMessages([]);
+      setShowNewConv(false);
+      setShowMobileList(false);
+      toast.success("会话已创建");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -165,7 +176,6 @@ const Chat = () => {
       // If this was a new conversation, update the selected conv ID
       if (!selectedConvId && result.conversation_id) {
         setSelectedConvId(result.conversation_id);
-        setIsDraftConversation(false);
         qc.invalidateQueries({ queryKey: ["conversations"] });
       }
 
@@ -191,13 +201,12 @@ const Chat = () => {
 
   // ─── New conversation ──────────────────────────────────────────
   const handleNewConversation = () => {
-    if (selectedKbs.length === 0) return;
-    // Don't create on server yet; will be created on first message via completions
-    setSelectedConvId(null);
-    setIsDraftConversation(true);
-    setMessages([]);
-    setShowNewConv(false);
-    setShowMobileList(false);
+    if (selectedKbs.length === 0) {
+      toast.error("请至少选择一个知识库");
+      return;
+    }
+    // Create conversation immediately on server
+    createConvMutation.mutate(selectedKbs);
   };
 
   // ─── Conversation list component ──────────────────────────────
@@ -229,7 +238,6 @@ const Chat = () => {
               }`}
               onClick={() => {
                 setSelectedConvId(conv.id);
-                setIsDraftConversation(false);
                 setShowMobileList(false);
               }}
             >

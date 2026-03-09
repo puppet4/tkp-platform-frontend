@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 import Governance from "@/pages/Governance";
 
@@ -82,7 +83,11 @@ describe("Governance page access control", () => {
   });
 
   it("hides permission-center tab when role lacks permission feature", () => {
-    render(<Governance />);
+    render(
+      <MemoryRouter>
+        <Governance />
+      </MemoryRouter>,
+    );
     expect(screen.queryByText("权限中心")).not.toBeInTheDocument();
     expect(screen.getByText("删除治理")).toBeInTheDocument();
   });
@@ -94,7 +99,11 @@ describe("Governance page access control", () => {
       canFeature: () => false,
     });
 
-    render(<Governance />);
+    render(
+      <MemoryRouter>
+        <Governance />
+      </MemoryRouter>,
+    );
     expect(screen.getByText("权限中心")).toBeInTheDocument();
   });
 });

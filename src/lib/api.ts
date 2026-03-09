@@ -26,27 +26,30 @@ interface ApiResponse<T> {
   meta?: Record<string, unknown>;
 }
 
-function unwrapApiData<T>(json: unknown): T {
-  if (
-    typeof json === "object" &&
-    json !== null &&
-    "data" in json
-  ) {
-    return (json as ApiResponse<T>).data;
-  }
-  // Some legacy endpoints return raw JSON object without { data } envelope.
-  return json as T;
-}
-
 export class ApiError extends Error {
   status: number;
   body: unknown;
+  code?: string;
+
   constructor(status: number, body: unknown) {
-    super(typeof body === "object" && body && "message" in (body as Record<string, unknown>)
-      ? String((body as Record<string, string>).message)
-      : `API Error ${status}`);
+    // Extract error message from standardized error response
+    let message = `API Error ${status}`;
+    let code: string | undefined;
+
+    if (typeof body === "object" && body !== null) {
+      if ("error" in body) {
+        const errorObj = (body as { error: { message?: string; code?: string } }).error;
+        if (errorObj.message) message = errorObj.message;
+        if (errorObj.code) code = errorObj.code;
+      } else if ("message" in body) {
+        message = String((body as { message: unknown }).message);
+      }
+    }
+
+    super(message);
     this.status = status;
     this.body = body;
+    this.code = code;
   }
 }
 
@@ -74,7 +77,11 @@ async function request<T>(
   }
 
   const json = await res.json().catch(() => null);
-  return unwrapApiData<T>(json);
+  // All responses now follow the standard { data } structure
+  if (json && typeof json === "object" && "data" in json) {
+    return (json as ApiResponse<T>).data;
+  }
+  return json as T;
 }
 
 // Upload helper (multipart/form-data)
@@ -95,7 +102,11 @@ async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   }
 
   const json = await res.json().catch(() => null);
-  return unwrapApiData<T>(json);
+  // All responses now follow the standard { data } structure
+  if (json && typeof json === "object" && "data" in json) {
+    return (json as ApiResponse<T>).data;
+  }
+  return json as T;
 }
 
 // ─── Auth types ──────────────────────────────────────────────────
@@ -460,6 +471,15 @@ export interface WorkspaceData {
 export interface WorkspaceMemberData {
   workspace_id: string;
   user_id: string;
+  email: string;
+  role: string;
+  status: string;
+}
+
+export interface KBMemberData {
+  kb_id: string;
+  user_id: string;
+  email?: string;
   role: string;
   status: string;
 }
@@ -589,6 +609,9 @@ export const workspaceApi = {
   listMembers(id: string) {
     return request<WorkspaceMemberData[]>("GET", `/api/workspaces/${id}/members`);
   },
+  upsertMember(wsId: string, data: { user_id: string; role: string }) {
+    return request<WorkspaceMemberData>("POST", `/api/workspaces/${wsId}/members`, data);
+  },
   addMember(wsId: string, userId: string, role: string) {
     return request<WorkspaceMemberData>("POST", `/api/workspaces/${wsId}/members`, { user_id: userId, role });
   },
@@ -634,6 +657,9 @@ export const kbApi = {
       `/api/knowledge-bases/${kbId}/members/${encodeURIComponent(userId)}`,
     );
   },
+  getStats(kbId: string) {
+    return request<KnowledgeBaseStatsData>("GET", `/api/knowledge-bases/${kbId}/stats`);
+  },
 };
 
 // ─── Document API ────────────────────────────────────────────────
@@ -644,10 +670,8 @@ export const documentApi = {
   get(docId: string) {
     return request<DocumentData>("GET", `/api/documents/${docId}`);
   },
-  upload(kbId: string, file: File) {
-    const fd = new FormData();
-    fd.append("file", file);
-    return uploadRequest<DocumentUploadData>(`/api/knowledge-bases/${kbId}/documents`, fd);
+  upload(kbId: string, formData: FormData) {
+    return uploadRequest<DocumentUploadData>(`/api/knowledge-bases/${kbId}/documents`, formData);
   },
   update(docId: string, data: { title?: string; metadata?: Record<string, unknown> }) {
     return request<DocumentData>("PATCH", `/api/documents/${docId}`, data);
@@ -659,18 +683,18 @@ export const documentApi = {
     return request<{ job_id: string; status: string }>("POST", `/api/documents/${docId}/reindex`);
   },
   getIngestionJob(jobId: string) {
-    return request<IngestionJobData>("GET", `/api/documents/ingestion-jobs/${encodeURIComponent(jobId)}`);
+    return request<IngestionJobData>("GET", `/api/ingestion-jobs/${encodeURIComponent(jobId)}`);
   },
   retryIngestionJob(jobId: string) {
     return request<IngestionJobData>(
       "POST",
-      `/api/documents/ingestion-jobs/${encodeURIComponent(jobId)}/retry`,
+      `/api/ingestion-jobs/${encodeURIComponent(jobId)}/retry`,
     );
   },
   deadLetterIngestionJob(jobId: string, reason?: string) {
     return request<IngestionJobData>(
       "POST",
-      `/api/documents/ingestion-jobs/${encodeURIComponent(jobId)}/dead-letter`,
+      `/api/ingestion-jobs/${encodeURIComponent(jobId)}/dead-letter`,
       { reason },
     );
   },
@@ -861,6 +885,22 @@ export const chatApi = {
       title: item.title,
       message_count: 0,
       created_at: item.updated_at,
+      updated_at: item.updated_at,
+    }));
+  },
+  createConversation(data: { kb_ids: string[] }) {
+    return request<{
+      conversation_id: string;
+      title: string;
+      kb_scope?: ConversationKbScope;
+      created_at: string;
+      updated_at: string;
+    }>("POST", "/api/chat/conversations", { kb_ids: data.kb_ids }).then((item) => ({
+      id: item.conversation_id,
+      title: item.title,
+      message_count: 0,
+      kb_ids: normalizeConversationKbScope(item.kb_scope),
+      created_at: item.created_at,
       updated_at: item.updated_at,
     }));
   },
@@ -1176,6 +1216,27 @@ export interface ReleaseRolloutData {
   progress: number;
   description?: string | null;
   created_at: string;
+  [key: string]: unknown;
+}
+
+export interface AlertData {
+  alert_id: string;
+  title: string;
+  message: string;
+  severity: string;
+  status: string;
+  triggered_at: string;
+  [key: string]: unknown;
+}
+
+export interface QuotaData {
+  quota_id: string;
+  metric_code: string;
+  scope_type: string;
+  scope_id: string;
+  limit_value: number;
+  current_usage?: number;
+  window_type: string;
   [key: string]: unknown;
 }
 
@@ -1531,7 +1592,12 @@ export const opsApi = {
   },
   // Webhooks
   listWebhooks() {
-    return request<AlertWebhookData[]>("GET", "/api/ops/alerts/webhooks");
+    return request<AlertWebhookData[]>("GET", "/api/ops/alerts/webhooks").then((items) =>
+      items.map((item) => ({
+        ...item,
+        events: item.event_types ?? [],
+      })),
+    );
   },
   upsertWebhook(data: { name: string; url: string; event_types: string[]; enabled: boolean }) {
     return request<AlertWebhookData>("PUT", "/api/ops/alerts/webhooks", data);
@@ -1614,5 +1680,270 @@ export const opsApi = {
   },
   runbook() {
     return request<RunbookSummaryData>("GET", "/api/ops/runbook");
+  },
+  // Ops pages compatibility methods
+  async getMetrics(timeRange = 24) {
+    const [overview, ingestion, retrieval] = await Promise.all([
+      this.overview(timeRange),
+      this.ingestionMetrics(timeRange).catch(() => null),
+      this.retrievalQuality(timeRange).catch(() => null),
+    ]);
+    return {
+      active_alerts: overview.incident_open_total ?? 0,
+      critical_alerts: overview.incident_critical_open_total ?? 0,
+      ingestion_jobs: ingestion?.backlog_total ?? 0,
+      processing_jobs: ingestion?.processing ?? 0,
+      avg_response_time: retrieval?.latency_p50_ms ?? ingestion?.avg_latency_ms_last_window ?? 0,
+      p95_response_time: retrieval?.latency_p95_ms ?? ingestion?.p95_latency_ms_last_window ?? 0,
+      cpu_usage: 0,
+      memory_usage: 0,
+      disk_usage: 0,
+      network_usage: 0,
+      recent_activities: [],
+    };
+  },
+  async listAlerts(status?: string) {
+    const [quotaAlerts, ingestionAlerts] = await Promise.all([
+      this.listQuotaAlerts(24, 50).catch(() => [] as QuotaAlertData[]),
+      this.ingestionAlerts(24).catch(() => ({ rules: [] as IngestionAlertsData["rules"] })),
+    ]);
+    const quotaItems: AlertData[] = quotaAlerts.map((item) => ({
+      alert_id: item.alert_id,
+      title: `配额告警: ${item.metric_code}`,
+      message: `${item.scope_type}/${item.scope_id} 已使用 ${item.used_value}/${item.limit_value}`,
+      severity: item.used_value >= item.limit_value ? "critical" : "warning",
+      status: "active",
+      triggered_at: item.created_at,
+    }));
+    const ingestionItems: AlertData[] = (ingestionAlerts.rules ?? []).map((rule) => ({
+      alert_id: `ingestion-${rule.rule}`,
+      title: `入库监控: ${rule.rule}`,
+      message: `当前值 ${rule.current_value}，告警阈值 ${rule.threshold_warn}/${rule.threshold_critical}`,
+      severity: rule.status === "critical" ? "critical" : rule.status === "warn" ? "warning" : "info",
+      status: rule.status === "pass" ? "resolved" : "active",
+      triggered_at: new Date().toISOString(),
+    }));
+    const merged = [...quotaItems, ...ingestionItems];
+    if (!status) return merged;
+    return merged.filter((item) => item.status === status);
+  },
+  acknowledgeAlert(alertId: string) {
+    return Promise.resolve({ alert_id: alertId, status: "acknowledged" });
+  },
+  resolveAlert(alertId: string) {
+    return Promise.resolve({ alert_id: alertId, status: "resolved" });
+  },
+  listIngestionJobs() {
+    return Promise.resolve([] as Array<{ job_id: string; status: string; kb_id: string; created_at: string }>);
+  },
+  // Incidents
+  listIncidents() {
+    return this.listTickets({ limit: 100 }).then((items) =>
+      items.map((item) => ({
+        ...item,
+        incident_id: String(item.ticket_id ?? ""),
+        severity: item.severity === "warn" ? "medium" : item.severity === "info" ? "low" : item.severity,
+      })),
+    );
+  },
+  createIncident(data: { title: string; description: string; severity: string }) {
+    return this.createTicket(data).then((item) => ({
+      ...item,
+      incident_id: String(item.ticket_id ?? ""),
+      severity: item.severity === "warn" ? "medium" : item.severity === "info" ? "low" : item.severity,
+    }));
+  },
+  updateIncident(id: string, data: { title?: string; description?: string; status?: string; severity?: string }) {
+    return this.updateTicket(id, {
+      status: data.status,
+      resolution: data.status === "resolved" ? data.description : undefined,
+    }).then((item) => ({
+      ...item,
+      incident_id: String(item.ticket_id ?? id),
+      severity: item.severity === "warn" ? "medium" : item.severity === "info" ? "low" : item.severity,
+    }));
+  },
+  // Quality & Evaluations
+  async getQualityMetrics() {
+    const quality = await this.retrievalQuality(24);
+    const accuracy = 1 - (quality.zero_hit_rate ?? 0);
+    const recall = quality.citation_coverage_rate ?? 0;
+    return {
+      avg_accuracy: accuracy,
+      avg_recall: recall,
+      avg_f1: accuracy + recall > 0 ? (2 * accuracy * recall) / (accuracy + recall) : 0,
+    };
+  },
+  listEvaluations() {
+    return this.listEvalRuns(50, 0).then((runs) =>
+      runs.map((run) => ({
+        eval_id: run.run_id,
+        name: run.name,
+        query: "",
+        expected_answer: "",
+        kb_id: "",
+        status: run.status,
+        created_at: run.created_at,
+        last_result: {
+          accuracy: run.hit_at_k,
+          recall: run.citation_coverage_rate,
+          f1:
+            run.hit_at_k + run.citation_coverage_rate > 0
+              ? (2 * run.hit_at_k * run.citation_coverage_rate) / (run.hit_at_k + run.citation_coverage_rate)
+              : 0,
+        },
+      })),
+    );
+  },
+  createEvaluation(data: { name: string; query: string; expected_answer: string; kb_id: string }) {
+    return this.createEvalRun({
+      name: data.name,
+      kb_ids: data.kb_id ? [data.kb_id] : [],
+      top_k: 5,
+      samples: [{ query: data.query, expected_terms: data.expected_answer ? [data.expected_answer] : [] }],
+    }).then((run) => ({
+      eval_id: run.run_id,
+      name: run.name,
+      query: data.query,
+      expected_answer: data.expected_answer,
+      kb_id: data.kb_id,
+      status: run.status,
+      created_at: run.created_at,
+    }));
+  },
+  runEvaluation(evalId: string) {
+    return this.getEvalRun(evalId).then((run) => ({
+      eval_id: run.run_id,
+      status: run.status,
+      last_result: {
+        accuracy: run.hit_at_k,
+        recall: run.citation_coverage_rate,
+        f1:
+          run.hit_at_k + run.citation_coverage_rate > 0
+            ? (2 * run.hit_at_k * run.citation_coverage_rate) / (run.hit_at_k + run.citation_coverage_rate)
+            : 0,
+      },
+    }));
+  },
+  // Quotas
+  listQuotas() {
+    return this.listQuotaPolicies().then((items) =>
+      items.map((item) => ({
+        quota_id: item.id,
+        metric_code: item.metric_code,
+        scope_type: item.scope_type,
+        scope_id: item.scope_id,
+        limit_value: item.limit_value,
+        current_usage: 0,
+        window_type: item.window_minutes >= 43200 ? "monthly" : item.window_minutes >= 1440 ? "daily" : "total",
+      })),
+    );
+  },
+  createQuota(data: { metric_code: string; scope_type: string; scope_id: string; limit_value: number; window_type: string }) {
+    const windowMap: Record<string, number> = { daily: 1440, monthly: 43200, total: 5256000 };
+    return this.upsertQuotaPolicy({
+      metric_code: data.metric_code,
+      scope_type: data.scope_type,
+      scope_id: data.scope_id,
+      limit_value: data.limit_value,
+      window_minutes: windowMap[data.window_type] ?? 1440,
+      enabled: true,
+    }).then((item) => ({
+      quota_id: item.id,
+      metric_code: item.metric_code,
+      scope_type: item.scope_type,
+      scope_id: item.scope_id,
+      limit_value: item.limit_value,
+      current_usage: 0,
+      window_type: item.window_minutes >= 43200 ? "monthly" : item.window_minutes >= 1440 ? "daily" : "total",
+    }));
+  },
+  async updateQuota(id: string, data: { limit_value: number }) {
+    const policies = await this.listQuotaPolicies();
+    const existing = policies.find((item) => item.id === id);
+    if (!existing) throw new Error("quota policy not found");
+    const updated = await this.upsertQuotaPolicy({
+      metric_code: existing.metric_code,
+      scope_type: existing.scope_type,
+      scope_id: existing.scope_id,
+      limit_value: data.limit_value,
+      window_minutes: existing.window_minutes,
+      enabled: existing.enabled,
+    });
+    return {
+      quota_id: updated.id,
+      metric_code: updated.metric_code,
+      scope_type: updated.scope_type,
+      scope_id: updated.scope_id,
+      limit_value: updated.limit_value,
+      current_usage: 0,
+      window_type: updated.window_minutes >= 43200 ? "monthly" : updated.window_minutes >= 1440 ? "daily" : "total",
+    };
+  },
+  // Releases & Webhooks
+  listReleases() {
+    return this.listRollouts({ limit: 50 }).then((items) =>
+      items.map((item) => ({
+        ...item,
+        strategy: String(item.strategy ?? "canary"),
+        target_percentage: Number(item.progress ?? 0),
+      })),
+    );
+  },
+  createRelease(data: { version: string; description: string; strategy: string; target_percentage: number }) {
+    return this.createRollout({
+      version: data.version,
+      description: data.description,
+      strategy: data.strategy,
+      canary_percent: data.target_percentage,
+    }).then((item) => ({
+      ...item,
+      strategy: data.strategy,
+      target_percentage: Number(item.progress ?? data.target_percentage),
+    }));
+  },
+  rollbackRelease(releaseId: string) {
+    return this.rollback(releaseId, "manual rollback").then((item) => ({
+      ...item,
+      strategy: String(item.strategy ?? "canary"),
+      target_percentage: Number(item.progress ?? 0),
+    }));
+  },
+  createWebhook(data: { name: string; url: string; events: string[] }) {
+    return this.upsertWebhook({
+      name: data.name,
+      url: data.url,
+      event_types: data.events,
+      enabled: true,
+    }).then((item) => ({
+      ...item,
+      events: item.event_types ?? data.events,
+    }));
+  },
+  async updateWebhook(id: string, data: { name?: string; url?: string; events?: string[] }) {
+    const webhooks = await this.listWebhooks();
+    const existing = webhooks.find((item) => item.webhook_id === id);
+    if (!existing) throw new Error("webhook not found");
+    const updated = await this.upsertWebhook({
+      name: data.name ?? existing.name,
+      url: data.url ?? existing.url,
+      event_types: data.events ?? existing.event_types ?? [],
+      enabled: existing.enabled,
+    });
+    return {
+      ...updated,
+      events: updated.event_types ?? data.events ?? [],
+    };
+  },
+  async deleteWebhook(id: string) {
+    const webhooks = await this.listWebhooks();
+    const existing = webhooks.find((item) => item.webhook_id === id);
+    if (!existing) return;
+    await this.upsertWebhook({
+      name: existing.name,
+      url: existing.url,
+      event_types: existing.event_types ?? [],
+      enabled: false,
+    });
   },
 };

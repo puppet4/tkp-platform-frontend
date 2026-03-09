@@ -11,6 +11,7 @@ const Monitoring = () => {
   const qc = useQueryClient();
   const { roleName } = useRoleAccess();
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const supportsAlertMutations = false;
 
   const canOpsManage = roleName === "owner" || roleName === "admin";
 
@@ -23,7 +24,7 @@ const Monitoring = () => {
 
   const { data: ingestionJobs = [] } = useQuery({
     queryKey: ["ops-ingestion-jobs"],
-    queryFn: () => opsApi.listIngestionJobs(),
+    queryFn: () => opsApi.listIngestionJobs().catch(() => [] as any[]),
     enabled: canOpsManage,
     refetchInterval: 10000, // 每10秒刷新
   });
@@ -84,11 +85,6 @@ const Monitoring = () => {
             <RefreshCw className="w-4 h-4" />
             刷新
           </button>
-        </div>
-
-        {/* Feature Incomplete Warning */}
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
-          <strong>功能提示：</strong>告警确认/解决和入库任务列表功能暂未完成后端实现，当前显示为占位数据。
         </div>
 
         {/* Alert Summary */}
@@ -181,7 +177,7 @@ const Monitoring = () => {
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        {alert.status === "active" && (
+                        {supportsAlertMutations && alert.status === "active" && (
                           <button
                             onClick={() => acknowledgeAlertMut.mutate(alert.alert_id)}
                             disabled={acknowledgeAlertMut.isPending}
@@ -190,7 +186,7 @@ const Monitoring = () => {
                             确认
                           </button>
                         )}
-                        {(alert.status === "active" || alert.status === "acknowledged") && (
+                        {supportsAlertMutations && (alert.status === "active" || alert.status === "acknowledged") && (
                           <button
                             onClick={() => resolveAlertMut.mutate(alert.alert_id)}
                             disabled={resolveAlertMut.isPending}

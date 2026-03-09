@@ -65,6 +65,29 @@ function AdminRoute({ children, requiredRole = "admin" }: { children: ReactNode;
   return <Navigate to="/403" replace />;
 }
 
+function ActionRoute({
+  children,
+  allOf = [],
+  anyOf = [],
+}: {
+  children: ReactNode;
+  allOf?: string[];
+  anyOf?: string[];
+}) {
+  const { isAuthenticated, loading, uiManifest } = useAuth();
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">加载中…</div>;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!uiManifest) return <Navigate to="/403" replace />;
+
+  const allowed = new Set(uiManifest.allowed_actions || []);
+  const passAll = allOf.every((action) => allowed.has(action));
+  const passAny = anyOf.length === 0 || anyOf.some((action) => allowed.has(action));
+
+  if (passAll && passAny) return <>{children}</>;
+  return <Navigate to="/403" replace />;
+}
+
 function AppRoutes() {
   return (
     <Suspense fallback={<PageFallback />}>
@@ -84,12 +107,20 @@ function AppRoutes() {
         <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
         <Route path="/chat/feedback" element={<ProtectedRoute><Feedback /></ProtectedRoute>} />
 
-        {/* Governance - 删除请求支持普通登录用户提交，其他子页仍需管理员 */}
-        <Route path="/governance" element={<ProtectedRoute><Governance /></ProtectedRoute>} />
-        <Route path="/governance/permissions" element={<AdminRoute><GovernancePermissions /></AdminRoute>} />
-        <Route path="/governance/retention" element={<AdminRoute><GovernanceRetention /></AdminRoute>} />
-        <Route path="/governance/pii" element={<AdminRoute><GovernancePII /></AdminRoute>} />
-        <Route path="/governance/deletion" element={<ProtectedRoute><GovernanceDeletion /></ProtectedRoute>} />
+        {/* Governance - 按动作权限控制访问 */}
+        <Route path="/governance" element={<ActionRoute anyOf={[
+          "api.governance.deletion.request.read",
+          "api.governance.deletion.request.create",
+          "api.governance.deletion.request.review",
+          "api.governance.deletion.execute",
+          "api.governance.retention.cleanup",
+          "api.governance.pii.mask",
+          "api.tenant.member.manage",
+        ]}><Governance /></ActionRoute>} />
+        <Route path="/governance/permissions" element={<ActionRoute allOf={["api.tenant.member.manage"]}><GovernancePermissions /></ActionRoute>} />
+        <Route path="/governance/retention" element={<ActionRoute allOf={["api.governance.retention.cleanup"]}><GovernanceRetention /></ActionRoute>} />
+        <Route path="/governance/pii" element={<ActionRoute allOf={["api.governance.pii.mask"]}><GovernancePII /></ActionRoute>} />
+        <Route path="/governance/deletion" element={<ActionRoute allOf={["api.governance.deletion.request.read"]}><GovernanceDeletion /></ActionRoute>} />
 
         {/* Ops - 需要 admin 权限 */}
         <Route path="/ops" element={<AdminRoute><OpsCenterNav /></AdminRoute>} />

@@ -5,10 +5,12 @@ import { useRoleAccess } from "@/hooks/useRoleAccess";
 
 const Governance = () => {
   const navigate = useNavigate();
-  const { roleName } = useRoleAccess();
+  const { hasPermission } = useRoleAccess();
 
-  const isPermissionAdminRole = roleName === "owner" || roleName === "admin";
-  const canCreateDeletionRequest = roleName.length > 0;
+  const canAccessPermissionCenter = hasPermission("api.tenant.member.manage");
+  const canCleanupRetention = hasPermission("api.governance.retention.cleanup");
+  const canMaskPII = hasPermission("api.governance.pii.mask");
+  const canReadDeletion = hasPermission("api.governance.deletion.request.read");
 
   const cards = [
     {
@@ -17,7 +19,7 @@ const Governance = () => {
       description: "管理租户角色权限和权限策略",
       icon: Key,
       path: "/governance/permissions",
-      visible: isPermissionAdminRole,
+      visible: canAccessPermissionCenter,
     },
     {
       id: "retention",
@@ -25,7 +27,7 @@ const Governance = () => {
       description: "配置和执行数据保留策略",
       icon: RotateCcw,
       path: "/governance/retention",
-      visible: isPermissionAdminRole,
+      visible: canCleanupRetention,
     },
     {
       id: "pii",
@@ -33,7 +35,7 @@ const Governance = () => {
       description: "对个人身份信息进行脱敏处理",
       icon: Shield,
       path: "/governance/pii",
-      visible: isPermissionAdminRole,
+      visible: canMaskPII,
     },
     {
       id: "deletion",
@@ -41,7 +43,7 @@ const Governance = () => {
       description: "管理数据删除请求和删除证明",
       icon: Trash2,
       path: "/governance/deletion",
-      visible: canCreateDeletionRequest,
+      visible: canReadDeletion,
     },
   ];
 

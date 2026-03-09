@@ -76,9 +76,17 @@ const Login = () => {
       }
     } catch (err) {
       if (err instanceof ApiError && isLogin) {
-        const body = err.body as { code?: string; details?: Record<string, unknown> } | undefined;
-        const challenge = typeof body?.details?.challenge_token === "string" ? body.details.challenge_token : "";
-        if (body?.code === "LOGIN_MFA_REQUIRED" && challenge) {
+        const body = err.body as
+          | {
+              error?: { code?: string; details?: Record<string, unknown> };
+              code?: string;
+              details?: Record<string, unknown>;
+            }
+          | undefined;
+        const errorCode = err.code || body?.error?.code || body?.code;
+        const details = body?.error?.details || body?.details || {};
+        const challenge = typeof details.challenge_token === "string" ? details.challenge_token : "";
+        if (errorCode === "LOGIN_MFA_REQUIRED" && challenge) {
           setMfaChallengeToken(challenge);
           setMfaOtpCode("");
           setMfaBackupCode("");

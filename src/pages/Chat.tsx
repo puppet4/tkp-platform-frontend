@@ -73,7 +73,7 @@ const Chat = () => {
   // Load messages when conversation selected
   const { data: convMessages, isLoading: msgsLoading } = useQuery({
     queryKey: ["conv-messages", selectedConvId],
-    queryFn: () => chatApi.listMessages(selectedConvId!),
+    queryFn: () => chatApi.listMessages(selectedConvId!, 100, 0),
     enabled: !!selectedConvId,
   });
 
@@ -186,7 +186,16 @@ const Chat = () => {
         citations: result.citations,
         created_at: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, assistantMsg]);
+      // Use functional update to avoid race condition
+      setMessages((prev) => {
+        // Check if user message is already in the list
+        const hasUserMsg = prev.some(m => m.id === userMsg.id);
+        if (hasUserMsg) {
+          return [...prev, assistantMsg];
+        } else {
+          return [...prev, userMsg, assistantMsg];
+        }
+      });
 
       // Refresh conversation list/detail (message_count etc)
       qc.invalidateQueries({ queryKey: ["conversations"] });

@@ -17,6 +17,7 @@ vi.mock("@/contexts/AuthContext", () => ({
 
 const useRoleAccessMock = vi.fn(() => ({
   roleName: "viewer",
+  hasPermission: () => false,
   canAction: () => false,
   canFeature: () => false,
 }));
@@ -46,6 +47,7 @@ describe("Governance page access control", () => {
   beforeEach(() => {
     useRoleAccessMock.mockReturnValue({
       roleName: "viewer",
+      hasPermission: (action: string) => action === "api.governance.deletion.request.read",
       canAction: () => false,
       canFeature: () => false,
     });
@@ -94,9 +96,15 @@ describe("Governance page access control", () => {
     expect(screen.queryByText("PII 脱敏")).not.toBeInTheDocument();
   });
 
-  it("shows all governance tabs for admin role even if feature/action flags are missing", () => {
+  it("shows all governance tabs when action permissions are present", () => {
     useRoleAccessMock.mockReturnValue({
       roleName: "admin",
+      hasPermission: (action: string) => [
+        "api.tenant.member.manage",
+        "api.governance.deletion.request.read",
+        "api.governance.retention.cleanup",
+        "api.governance.pii.mask",
+      ].includes(action),
       canAction: () => false,
       canFeature: () => false,
     });

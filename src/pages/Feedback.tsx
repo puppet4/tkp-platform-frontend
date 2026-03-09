@@ -23,6 +23,7 @@ const typeLabels: Record<string, string> = {
 };
 
 const PAGE_SIZE = 10;
+const REPLAY_POLL_INTERVAL_MS = 2000; // 配置化轮询间隔
 
 const Feedback = () => {
   const [selectedFb, setSelectedFb] = useState<FeedbackItemData | null>(null);
@@ -53,7 +54,7 @@ const Feedback = () => {
     refetchOnWindowFocus: false,
     refetchInterval: (query) => {
       const status = String((query.state.data as Record<string, unknown> | undefined)?.status || "");
-      return ["completed", "failed", "error"].includes(status) ? false : 2000;
+      return ["completed", "failed", "error"].includes(status) ? false : REPLAY_POLL_INTERVAL_MS;
     },
   });
 

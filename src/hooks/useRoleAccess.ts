@@ -9,7 +9,7 @@ const ROUTE_REQUIRED_ACTIONS: Record<string, string[]> = {
   "/agent": ["api.agent.run.read"],
   "/tenant": ["api.tenant.delete"],
   "/ops": ["api.tenant.member.manage"],
-  "/governance": ["api.governance.deletion.request.create"],
+  "/governance": ["api.governance.deletion.request.read"],
   "/settings": ["api.user.read"],
 };
 
@@ -31,7 +31,7 @@ export function useRoleAccess() {
       return requiredActions.every((action) => allowedActions.includes(action));
     }
 
-    return true; // Not in manifest and no explicit fallback rules
+    return false; // Unknown nav path defaults to deny
   };
 
   const canAction = (action: string) => hasPermission(action);
@@ -39,13 +39,13 @@ export function useRoleAccess() {
   const canButton = (code: string) => {
     if (!uiManifest) return false;
     const btn = uiManifest.buttons.find((b) => b.code === code);
-    return btn ? btn.allowed : true;
+    return btn ? btn.allowed : false;
   };
 
   const canFeature = (code: string) => {
     if (!uiManifest) return false;
     const feat = uiManifest.features.find((f) => f.code === code);
-    return feat ? feat.allowed : true;
+    return feat ? feat.allowed : false;
   };
 
   return { roleName: tenantRole, permissions: allowedActions, hasPermission, canViewNav, canAction, canButton, canFeature };

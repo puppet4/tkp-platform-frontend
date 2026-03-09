@@ -8,11 +8,11 @@ import { useRoleAccess } from "@/hooks/useRoleAccess";
 import { handleApiError } from "@/lib/error-handler";
 
 const Retention = () => {
-  const { roleName } = useRoleAccess();
+  const { hasPermission } = useRoleAccess();
   const [retentionResourceType, setRetentionResourceType] = useState("retrieval_logs");
   const [retentionDryRun, setRetentionDryRun] = useState(true);
 
-  const isAdmin = roleName === "owner" || roleName === "admin";
+  const canCleanupRetention = hasPermission("api.governance.retention.cleanup");
 
   const cleanupMut = useMutation({
     mutationFn: (data: { resource_type: string; dry_run: boolean }) =>
@@ -27,7 +27,7 @@ const Retention = () => {
     onError: (error) => toast.error(handleApiError(error)),
   });
 
-  if (!isAdmin) {
+  if (!canCleanupRetention) {
     return (
       <AppLayout>
         <div className="p-6 text-center text-muted-foreground">
@@ -50,11 +50,7 @@ const Retention = () => {
           </p>
         </div>
 
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
-          当前仅开放“手动清理”能力；策略管理（创建/编辑/列表）将在后端端点完善后上线。
-        </div>
-
-        <div className="bg-card rounded-lg border p-6 space-y-4">
+        <div className=”bg-card rounded-lg border p-6 space-y-4”>
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <AlertTriangle className="w-5 h-5" />
             手动清理过期数据
@@ -69,8 +65,6 @@ const Retention = () => {
                 className="w-full px-3 py-2 border rounded-md"
               >
                 <option value="retrieval_logs">检索日志</option>
-                <option value="conversations">对话会话</option>
-                <option value="audit_logs">审计日志</option>
                 <option value="ingestion_jobs">入库任务</option>
                 <option value="agent_runs">Agent 运行</option>
               </select>

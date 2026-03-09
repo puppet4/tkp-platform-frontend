@@ -11,7 +11,7 @@ import { handleApiError } from "@/lib/error-handler";
 
 const Deletion = () => {
   const qc = useQueryClient();
-  const { roleName } = useRoleAccess();
+  const { hasPermission } = useRoleAccess();
 
   const [showDeleteReq, setShowDeleteReq] = useState(false);
   const [showConfirm, setShowConfirm] = useState<{ type: "approve" | "reject" | "execute" | "cancel"; id: string } | null>(null);
@@ -23,8 +23,9 @@ const Deletion = () => {
   const [formTargetType, setFormTargetType] = useState("document");
   const [rejectReason, setRejectReason] = useState("");
 
-  const canCreateDeletionRequest = roleName.length > 0;
-  const canReviewDeletion = roleName === "owner" || roleName === "admin";
+  const canCreateDeletionRequest = hasPermission("api.governance.deletion.request.create");
+  const canReviewDeletion = hasPermission("api.governance.deletion.request.review");
+  const canExecuteDeletion = hasPermission("api.governance.deletion.execute");
 
   const { data: deletionRequests = [], isLoading: reqLoading } = useQuery({
     queryKey: ["deletion-requests"],
@@ -248,7 +249,7 @@ const Deletion = () => {
                           </button>
                         </>
                       )}
-                      {canReviewDeletion && req.status === "approved" && (
+                      {canExecuteDeletion && req.status === "approved" && (
                         <button
                           onClick={() => setShowConfirm({ type: "execute", id: req.request_id })}
                           className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
@@ -256,7 +257,7 @@ const Deletion = () => {
                           执行删除
                         </button>
                       )}
-                      {req.status === "pending" && (
+                      {canCreateDeletionRequest && req.status === "pending" && (
                         <button
                           onClick={() => setShowConfirm({ type: "cancel", id: req.request_id })}
                           className="px-3 py-1 text-sm border rounded hover:bg-muted"

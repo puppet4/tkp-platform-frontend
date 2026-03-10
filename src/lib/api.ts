@@ -7,22 +7,26 @@ const rawApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const API_BASE = rawApiBase ? rawApiBase.replace(/\/+$/, "") : "";
 
 // ─── Token helpers ───────────────────────────────────────────────
-// WARNING: localStorage is vulnerable to XSS attacks. In production, consider:
-// 1. Using HttpOnly cookies for token storage
-// 2. Implementing Content Security Policy (CSP)
-// 3. Using secure, httpOnly cookies with SameSite attribute
-const TOKEN_KEY = "tkp_token";
+// Token is now managed via httpOnly cookies for security
+// The backend sets the cookie, frontend just needs to include credentials
+const TOKEN_KEY = "tkp_token"; // Kept for backward compatibility
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  // Token is in httpOnly cookie, not accessible from JS
+  // This function is kept for backward compatibility but returns null
+  return null;
 }
 
 export function setToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
+  // Token is set by backend via Set-Cookie header
+  // This function is kept for backward compatibility but does nothing
+  console.warn("setToken is deprecated. Token is managed via httpOnly cookies.");
 }
 
 export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+  // Token is cleared by backend via Set-Cookie with Max-Age=0
+  // This function is kept for backward compatibility but does nothing
+  console.warn("clearToken is deprecated. Token is managed via httpOnly cookies.");
 }
 
 // ─── Generic fetcher ─────────────────────────────────────────────
@@ -76,15 +80,20 @@ async function request<T>(
   auth = true,
 ): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (auth) {
-    const token = getToken();
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  // CSRF protection: get token from meta tag or cookie
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+    || getCookie('csrf_token');
+  if (csrfToken && (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE')) {
+    headers['X-CSRF-Token'] = csrfToken;
   }
 
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    credentials: 'include', // Include cookies for authentication
+    signal: AbortSignal.timeout(30000), // 30 second timeout
   });
 
   if (!res.ok) {
@@ -100,16 +109,31 @@ async function request<T>(
   return json as T;
 }
 
+// Helper to get cookie value
+function getCookie(name: string): string | null {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
+  return null;
+}
+
 // Upload helper (multipart/form-data)
 async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  // CSRF protection
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+    || getCookie('csrf_token');
+  if (csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
 
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers,
     body: formData,
+    credentials: 'include', // Include cookies for authentication
+    signal: AbortSignal.timeout(60000), // 60 second timeout for uploads
   });
 
   if (!res.ok) {
@@ -1843,32 +1867,6 @@ export const opsApi = {
     if (!status) return merged;
     return merged.filter((item) => item.status === status);
   },
-  acknowledgeAlert(alertId: string) {
-    return request<{ alert_id: string; status: string }>("POST", `/api/ops/alerts/${encodeURIComponent(alertId)}/acknowledge`);
-  },
-  resolveAlert(alertId: string) {
-    return request<{ alert_id: string; status: string }>("POST", `/api/ops/alerts/${encodeURIComponent(alertId)}/resolve`);
-  },
-  listIngestionJobs(statusFilter?: string, limit = 50, offset = 0) {
-    const qs = new URLSearchParams();
-    if (statusFilter) qs.set("status_filter", statusFilter);
-    qs.set("limit", String(limit));
-    qs.set("offset", String(offset));
-    return request<{
-      jobs: Array<{
-        job_id: string;
-        document_id: string;
-        status: string;
-        progress?: number;
-        error_message?: string;
-        created_at?: string;
-        updated_at?: string;
-      }>;
-      total: number;
-      limit: number;
-      offset: number;
-    }>("GET", `/api/ops/ingestion/jobs?${qs.toString()}`);
-  },
   // Incidents
   listIncidents() {
     return this.listTickets({ limit: 100 }).then((items) =>
@@ -2061,8 +2059,5 @@ export const opsApi = {
         events: updated.event_types ?? data.events ?? [],
       }));
     });
-  },
-  deleteWebhook(webhookId: string) {
-    return request<{ webhook_id: string; deleted: boolean }>("DELETE", `/api/ops/alerts/webhooks/${webhookId}`);
   },
 };

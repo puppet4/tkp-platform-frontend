@@ -7,7 +7,7 @@ interface UseTableControlsOptions<T> {
   defaultSortDir?: "asc" | "desc";
 }
 
-export function useTableControls<T extends Record<string, any>>({
+export function useTableControls<T extends Record<string, unknown>>({
   data,
   pageSize = 10,
   defaultSortField,

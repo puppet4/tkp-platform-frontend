@@ -205,7 +205,7 @@ export function useUploadDocument() {
 export function useUpdateDocument() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ docId, data }: { docId: string; data: { title?: string; metadata?: Record<string, any> } }) =>
+    mutationFn: ({ docId, data }: { docId: string; data: { title?: string; metadata?: Record<string, unknown> } }) =>
       documentApi.update(docId, data),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["documents"] });

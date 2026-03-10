@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { agentApi, type AgentRunBriefData, type AgentRunDetailData } from "@/lib/api";
-import { Bot, Play, Square, Clock, CheckCircle, AlertTriangle, Loader2, Eye } from "lucide-react";
+import { Bot, Play, Square, Clock, CheckCircle, AlertTriangle, Loader2, Eye, type LucideIcon } from "lucide-react";
 import { FormDialog, FormField, FormTextarea, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-const statusConfig: Record<string, { label: string; cls: string; icon: any }> = {
+const statusConfig: Record<string, { label: string; cls: string; icon: LucideIcon }> = {
   queued: { label: "排队中", cls: "bg-muted text-muted-foreground", icon: Clock },
   running: { label: "运行中", cls: "bg-info/10 text-info", icon: Loader2 },
   completed: { label: "已完成", cls: "bg-success/10 text-success", icon: CheckCircle },

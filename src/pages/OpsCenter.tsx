@@ -10,6 +10,7 @@ import {
   Activity, AlertTriangle, Bell,
   CheckCircle, BarChart3, Ticket,
   Rocket, Webhook, Plus, RefreshCw, Loader2, Pencil,
+  type LucideIcon,
 } from "lucide-react";
 import { FormDialog, FormField, FormInput, FormTextarea, FormSelect, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
@@ -421,7 +422,7 @@ const OpsCenter = () => {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const tabs: { id: Tab; label: string; icon: any }[] = [
+  const tabs: { id: Tab; label: string; icon: LucideIcon }[] = [
     { id: "overview", label: "总览", icon: Activity },
     { id: "alerts", label: "告警", icon: Bell },
     { id: "ingestion", label: "入库指标", icon: Activity },

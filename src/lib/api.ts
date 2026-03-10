@@ -460,7 +460,7 @@ export const tenantApi = {
   inviteMember(tenantId: string, email: string, role: string) {
     return request<TenantMemberData>("POST", `/api/tenants/${tenantId}/invitations`, { email, role });
   },
-  upsertMember(tenantId: string, email: string, role: string) {
+  addMemberDirectly(tenantId: string, email: string, role: string) {
     return request<TenantMemberData>("POST", `/api/tenants/${tenantId}/members`, { email, role });
   },
   updateMemberRole(tenantId: string, userId: string, role: string) {
@@ -1132,8 +1132,7 @@ export const governanceApi = {
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     const q = qs.toString();
-    return request<{ requests: DeletionRequestData[] }>("GET", `/api/governance/deletion/requests${q ? `?${q}` : ""}`)
-      .then((resp) => resp.requests ?? []);
+    return request<{ requests: DeletionRequestData[] }>("GET", `/api/governance/deletion/requests${q ? `?${q}` : ""}`);
   },
   createDeletionRequest(resourceType: string, resourceId: string, reason: string) {
     return request<DeletionRequestData>(
@@ -1186,10 +1185,10 @@ export const governanceApi = {
     }));
   },
   retentionCleanup(resourceType: string, dryRun = true) {
-    const qs = new URLSearchParams();
-    qs.set("resource_type", resourceType);
-    qs.set("dry_run", String(dryRun));
-    return request<RetentionCleanupData>("POST", `/api/governance/retention/cleanup?${qs.toString()}`);
+    return request<RetentionCleanupData>("POST", "/api/governance/retention/cleanup", {
+      resource_type: resourceType,
+      dry_run: dryRun,
+    });
   },
   listRetentionPolicies() {
     return request<{
@@ -1202,29 +1201,30 @@ export const governanceApi = {
     }>("GET", "/api/governance/retention/policies");
   },
   createRetentionPolicy(resourceType: string, retentionDays: number, autoDelete = false, archiveBeforeDelete = false) {
-    const qs = new URLSearchParams();
-    qs.set("resource_type", resourceType);
-    qs.set("retention_days", String(retentionDays));
-    qs.set("auto_delete", String(autoDelete));
-    qs.set("archive_before_delete", String(archiveBeforeDelete));
     return request<{
       resource_type: string;
       retention_days: number;
       auto_delete: boolean;
       archive_before_delete: boolean;
-    }>("POST", `/api/governance/retention/policies?${qs.toString()}`);
+    }>("POST", "/api/governance/retention/policies", {
+      resource_type: resourceType,
+      retention_days: retentionDays,
+      auto_delete: autoDelete,
+      archive_before_delete: archiveBeforeDelete,
+    });
   },
   updateRetentionPolicy(resourceType: string, retentionDays: number, autoDelete = false, archiveBeforeDelete = false) {
-    const qs = new URLSearchParams();
-    qs.set("retention_days", String(retentionDays));
-    qs.set("auto_delete", String(autoDelete));
-    qs.set("archive_before_delete", String(archiveBeforeDelete));
     return request<{
       resource_type: string;
       retention_days: number;
       auto_delete: boolean;
       archive_before_delete: boolean;
-    }>("PUT", `/api/governance/retention/policies/${encodeURIComponent(resourceType)}?${qs.toString()}`);
+    }>("PUT", `/api/governance/retention/policies/${encodeURIComponent(resourceType)}`, {
+      resource_type: resourceType,
+      retention_days: retentionDays,
+      auto_delete: autoDelete,
+      archive_before_delete: archiveBeforeDelete,
+    });
   },
   executeRetention() {
     // 执行所有自动清理策略
@@ -1234,10 +1234,10 @@ export const governanceApi = {
     return this.retentionCleanup(resourceType, dryRun);
   },
   piiMask(text: string, piiTypes?: string[]) {
-    const qs = new URLSearchParams();
-    qs.set("text", text);
-    (piiTypes ?? []).forEach((item) => qs.append("pii_types", item));
-    return request<PIIMaskData>("POST", `/api/governance/pii/mask?${qs.toString()}`);
+    return request<PIIMaskData>("POST", "/api/governance/pii/mask", {
+      text: text,
+      pii_types: piiTypes ?? [],
+    });
   },
 };
 
@@ -1620,16 +1620,16 @@ export const opsApi = {
   upsertQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("PUT", "/api/ops/quotas", data);
   },
-  createQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_seconds?: number; enabled?: boolean }) {
+  createQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes?: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("POST", "/api/ops/quotas", {
       ...data,
-      window_seconds: data.window_seconds ?? (data.window_minutes ?? 60) * 60,
+      window_minutes: data.window_minutes ?? 60,
     });
   },
-  updateQuotaPolicy(policyId: string, data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_seconds?: number; enabled?: boolean }) {
+  updateQuotaPolicy(policyId: string, data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes?: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("PUT", `/api/ops/quotas/${policyId}`, {
       ...data,
-      window_seconds: data.window_seconds ?? (data.window_minutes ?? 60) * 60,
+      window_minutes: data.window_minutes ?? 60,
     });
   },
   listQuotaPolicies() {
@@ -1661,15 +1661,9 @@ export const opsApi = {
     diagnosis?: Record<string, unknown>;
     context?: Record<string, unknown>;
   }) {
-    const severityMap: Record<string, string> = {
-      high: "critical",
-      medium: "warn",
-      low: "info",
-    };
-    const normalizedSeverity = severityMap[data.severity] ?? data.severity;
     return request<IncidentTicketRawData>("POST", "/api/ops/incidents/tickets", {
       source_code: data.source_code ?? "manual",
-      severity: normalizedSeverity,
+      severity: data.severity,
       title: data.title,
       summary: data.description || data.title,
       diagnosis: data.diagnosis ?? {},
@@ -1714,6 +1708,29 @@ export const opsApi = {
       attributes: data.attributes ?? {},
       dry_run: data.dry_run ?? true,
     });
+  },
+  acknowledgeAlert(alertId: string) {
+    return request<{ alert_id: string; status: string }>("POST", `/api/ops/alerts/${alertId}/acknowledge`);
+  },
+  resolveAlert(alertId: string) {
+    return request<{ alert_id: string; status: string }>("POST", `/api/ops/alerts/${alertId}/resolve`);
+  },
+  // Ingestion Jobs
+  listIngestionJobs(params?: { status?: string; limit?: number; offset?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<Array<{
+      job_id: string;
+      document_id: string;
+      status: string;
+      progress: number;
+      error_message?: string | null;
+      created_at: string;
+      updated_at: string;
+    }>>("GET", `/api/ops/ingestion/jobs${q ? `?${q}` : ""}`);
   },
   // Rollouts
   listRollouts(params?: { status?: string; limit?: number; offset?: number }) {

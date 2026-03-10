@@ -172,7 +172,7 @@ const TenantAdmin = () => {
   });
 
   const upsertMemberMutation = useMutation({
-    mutationFn: () => tenantApi.upsertMember(selectedTenantId, directEmail.trim(), directRole),
+    mutationFn: () => tenantApi.addMemberDirectly(selectedTenantId, directEmail.trim(), directRole),
     onSuccess: async () => {
       setDirectEmail("");
       await qc.invalidateQueries({ queryKey: ["tenant-admin-members", selectedTenantId] });

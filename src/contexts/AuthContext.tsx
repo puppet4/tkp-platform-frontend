@@ -70,15 +70,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceAccessItem[]>([]);
   const [uiManifest, setUiManifest] = useState<PermissionUIManifestData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const refreshPermissions = useCallback(async () => {
+    // Prevent concurrent refresh requests
+    if (isRefreshing) return;
+
+    setIsRefreshing(true);
     try {
       const manifest = await permissionsApi.uiManifest();
       setUiManifest(manifest);
-    } catch {
-      // permissions endpoint may fail if no tenant context yet
+    } catch (error) {
+      // Log permission refresh failures for debugging
+      console.warn("Failed to refresh permissions:", error);
+      // Don't clear user session on permission refresh failure
+    } finally {
+      setIsRefreshing(false);
     }
-  }, []);
+  }, [isRefreshing]);
 
   // Fetch /auth/me + /permissions/ui-manifest
   const fetchIdentity = useCallback(async () => {
@@ -116,19 +125,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
+
     const timer = window.setInterval(() => {
       refreshPermissions().catch(() => undefined);
     }, 60_000);
+
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
         refreshPermissions().catch(() => undefined);
       }
     };
-    window.addEventListener("focus", onVisibility);
+
+    const onFocus = () => {
+      refreshPermissions().catch(() => undefined);
+    };
+
+    window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("focus", onVisibility);
+      window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [user, refreshPermissions]);

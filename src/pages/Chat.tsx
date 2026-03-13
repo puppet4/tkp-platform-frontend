@@ -37,6 +37,7 @@ const Chat = () => {
   const [showCitations, setShowCitations] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
+  const [currentStreamingMsgId, setCurrentStreamingMsgId] = useState<string | null>(null);
   const [showNewConv, setShowNewConv] = useState(false);
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [showMobileList, setShowMobileList] = useState(false);
@@ -78,13 +79,15 @@ const Chat = () => {
   });
 
   useEffect(() => {
-    if (convMessages) setMessages(convMessages);
-  }, [convMessages]);
+    if (convMessages && Array.isArray(convMessages) && !isStreaming) {
+      setMessages(convMessages);
+    }
+  }, [convMessages, isStreaming]);
 
   // Auto-select first conversation
   useEffect(() => {
-    if (!selectedConvId && conversations.length > 0) {
-      setSelectedConvId(conversations[0].id);
+    if (!selectedConvId && Array.isArray(conversations) && conversations.length > 0) {
+      setSelectedConvId(conversations[0]?.id);
     }
   }, [conversations, selectedConvId]);
 
@@ -149,9 +152,12 @@ const Chat = () => {
     if (!input.trim() || isStreaming) return;
 
     const userContent = input.trim();
+    const streamingMsgId = `streaming-${Date.now()}`;
+
     setInput("");
     setIsStreaming(true);
     setStreamText("");
+    setCurrentStreamingMsgId(streamingMsgId);
 
     // Optimistic user message
     const userMsg: ConversationMessageData = {
@@ -188,13 +194,11 @@ const Chat = () => {
       };
       // Use functional update to avoid race condition
       setMessages((prev) => {
-        // Check if user message is already in the list
-        const hasUserMsg = prev.some(m => m.id === userMsg.id);
-        if (hasUserMsg) {
+        // Only add if this is still the current streaming message
+        if (currentStreamingMsgId === streamingMsgId) {
           return [...prev, assistantMsg];
-        } else {
-          return [...prev, userMsg, assistantMsg];
         }
+        return prev;
       });
 
       // Refresh conversation list/detail (message_count etc)
@@ -205,6 +209,7 @@ const Chat = () => {
     } finally {
       setIsStreaming(false);
       setStreamText("");
+      setCurrentStreamingMsgId(null);
     }
   };
 
@@ -369,7 +374,15 @@ const Chat = () => {
                   >
                     {msg.role === "assistant" ? (
                       <div className="prose prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground prose-strong:text-foreground prose-code:text-primary prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-secondary prose-pre:border prose-pre:border-border prose-pre:rounded-lg prose-li:text-foreground">
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown
+                          components={{
+                            html: () => null,
+                          }}
+                          disallowedElements={['script', 'iframe', 'object', 'embed', 'style']}
+                          unwrapDisallowed={true}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
                       </div>
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>

@@ -41,6 +41,25 @@ const KnowledgeBaseDetail = () => {
   const { data: documents = [], isLoading: docsLoading } = useDocuments(kbId || "");
   const { data: members = [] } = useKbMembers(kbId || "", { enabled: showMembers && !!kbId });
 
+  // Handle KB not found
+  if (!docsLoading && kbId && !kb) {
+    return (
+      <AppLayout>
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <p className="text-muted-foreground">知识库不存在或无权访问</p>
+            <button
+              onClick={() => navigate("/resources")}
+              className="text-primary hover:underline"
+            >
+              返回资源列表
+            </button>
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
+
   const uploadMut = useUploadDocument();
   const deleteMut = useDeleteDocument();
   const reindexMut = useReindexDocument();
@@ -49,11 +68,9 @@ const KnowledgeBaseDetail = () => {
 
   const handleUpload = () => {
     if (!selectedFile || !kbId) return;
-    const formData = new FormData();
-    formData.append("file", selectedFile);
 
     uploadMut.mutate(
-      { kbId, formData },
+      { kbId, file: selectedFile },
       {
         onSuccess: () => {
           toast.success("文档上传成功");
@@ -83,8 +100,16 @@ const KnowledgeBaseDetail = () => {
 
   const handleAddMember = () => {
     if (!memberUserId.trim() || !kbId) return;
+
+    const trimmedUserId = memberUserId.trim();
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(trimmedUserId)) {
+      toast.error("用户ID格式不正确");
+      return;
+    }
+
     upsertMemberMut.mutate(
-      { kbId, userId: memberUserId, role: memberRole },
+      { kbId, userId: trimmedUserId, role: memberRole },
       {
         onSuccess: () => {
           toast.success("成员已添加");

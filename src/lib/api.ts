@@ -6,27 +6,23 @@
 const rawApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const API_BASE = rawApiBase ? rawApiBase.replace(/\/+$/, "") : "";
 
+// Request timeout configuration (in milliseconds)
+const REQUEST_TIMEOUT = 30000; // 30 seconds
+const UPLOAD_TIMEOUT = 60000; // 60 seconds
+
 // ─── Token helpers ───────────────────────────────────────────────
-// Token is now managed via httpOnly cookies for security
-// The backend sets the cookie, frontend just needs to include credentials
-const TOKEN_KEY = "tkp_token"; // Kept for backward compatibility
+const TOKEN_KEY = "tkp_token";
 
 export function getToken(): string | null {
-  // Token is in httpOnly cookie, not accessible from JS
-  // This function is kept for backward compatibility but returns null
-  return null;
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string) {
-  // Token is set by backend via Set-Cookie header
-  // This function is kept for backward compatibility but does nothing
-  console.warn("setToken is deprecated. Token is managed via httpOnly cookies.");
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
-  // Token is cleared by backend via Set-Cookie with Max-Age=0
-  // This function is kept for backward compatibility but does nothing
-  console.warn("clearToken is deprecated. Token is managed via httpOnly cookies.");
+  localStorage.removeItem(TOKEN_KEY);
 }
 
 // ─── Generic fetcher ─────────────────────────────────────────────
@@ -73,80 +69,132 @@ export class ApiError extends Error {
   }
 }
 
+// Request queue for handling concurrent requests during token refresh
+let isRefreshingToken = false;
+let refreshQueue: Array<() => void> = [];
+
+function waitForTokenRefresh(): Promise<void> {
+  return new Promise((resolve) => {
+    refreshQueue.push(resolve);
+  });
+}
+
+function notifyTokenRefreshed() {
+  refreshQueue.forEach((resolve) => resolve());
+  refreshQueue = [];
+  isRefreshingToken = false;
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
   auth = true,
 ): Promise<T> {
+  // Wait if token is being refreshed
+  if (isRefreshingToken && auth) {
+    await waitForTokenRefresh();
+  }
+
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  // CSRF protection: get token from meta tag or cookie
-  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
-    || getCookie('csrf_token');
-  if (csrfToken && (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE')) {
-    headers['X-CSRF-Token'] = csrfToken;
+  // Add Authorization header if token exists and auth is required
+  if (auth) {
+    const token = getToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: 'include', // Include cookies for authentication
-    signal: AbortSignal.timeout(30000), // 30 second timeout
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, errBody);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'include',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+
+      // Handle 401 Unauthorized - token might be expired
+      if (res.status === 401 && auth && !isRefreshingToken) {
+        // Clear invalid token
+        clearToken();
+        // Notify queue that refresh failed
+        notifyTokenRefreshed();
+      }
+
+      throw new ApiError(res.status, errBody);
+    }
+
+    const json = await res.json().catch(() => null);
+    // All responses now follow the standard { data } structure
+    if (json && typeof json === "object" && "data" in json) {
+      return (json as ApiResponse<T>).data;
+    }
+    return json as T;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError(408, { message: '请求超时，请检查网络连接或稍后重试' });
+    }
+    throw error;
   }
-
-  const json = await res.json().catch(() => null);
-  // All responses now follow the standard { data } structure
-  if (json && typeof json === "object" && "data" in json) {
-    return (json as ApiResponse<T>).data;
-  }
-  return json as T;
-}
-
-// Helper to get cookie value
-function getCookie(name: string): string | null {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
-  return null;
 }
 
 // Upload helper (multipart/form-data)
 async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   const headers: Record<string, string> = {};
 
-  // CSRF protection
-  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
-    || getCookie('csrf_token');
-  if (csrfToken) {
-    headers['X-CSRF-Token'] = csrfToken;
+  // Add Authorization header if token exists
+  const token = getToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers,
-    body: formData,
-    credentials: 'include', // Include cookies for authentication
-    signal: AbortSignal.timeout(60000), // 60 second timeout for uploads
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT);
 
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, errBody);
-  }
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers,
+      body: formData,
+      credentials: 'include',
+      signal: controller.signal,
+    });
 
-  const json = await res.json().catch(() => null);
-  // All responses now follow the standard { data } structure
-  if (json && typeof json === "object" && "data" in json) {
-    return (json as ApiResponse<T>).data;
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, errBody);
+    }
+
+    const json = await res.json().catch(() => null);
+    // All responses now follow the standard { data } structure
+    if (json && typeof json === "object" && "data" in json) {
+      return (json as ApiResponse<T>).data;
+    }
+    return json as T;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    // Handle network errors and timeouts
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError(408, { message: '上传超时，请检查网络连接或稍后重试' });
+    }
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new ApiError(0, { message: '网络错误，请检查网络连接' });
+    }
+    throw error;
   }
-  return json as T;
 }
 
 // ─── Auth types ──────────────────────────────────────────────────
@@ -1097,7 +1145,7 @@ export const feedbackApi = {
     conversation_id?: string;
     message_id?: string;
   }) {
-    return request<unknown>("POST", "/api/feedback", data);
+    return request<{ feedback_id: string; created_at: string }>("POST", "/api/feedback", data);
   },
   replay(feedbackId: string, replayType = "full_pipeline") {
     return request<FeedbackReplayData>("POST", "/api/feedback/replay", {
@@ -1170,20 +1218,20 @@ export const governanceApi = {
     );
   },
   approveDeletion(requestId: string) {
-    return request<unknown>("POST", `/api/governance/deletion/requests/${requestId}/approve`);
+    return request<DeletionRequestData>("POST", `/api/governance/deletion/requests/${requestId}/approve`);
   },
   rejectDeletion(requestId: string, reason: string) {
-    return request<unknown>(
+    return request<DeletionRequestData>(
       "POST",
       `/api/governance/deletion/requests/${requestId}/reject`,
       { reason },
     );
   },
   cancelDeletion(requestId: string) {
-    return request<unknown>("POST", `/api/governance/deletion/requests/${requestId}/cancel`);
+    return request<DeletionRequestData>("POST", `/api/governance/deletion/requests/${requestId}/cancel`);
   },
   executeDeletion(requestId: string) {
-    return request<unknown>("POST", `/api/governance/deletion/requests/${requestId}/execute`);
+    return request<DeletionRequestData>("POST", `/api/governance/deletion/requests/${requestId}/execute`);
   },
   getDeletionProof(proofId: string) {
     return request<{
@@ -1253,9 +1301,6 @@ export const governanceApi = {
   executeRetention() {
     // 执行所有自动清理策略
     return request<Record<string, unknown>>("POST", "/api/governance/retention/execute");
-  },
-  cleanupExpiredData(resourceType: string, dryRun: boolean) {
-    return this.retentionCleanup(resourceType, dryRun);
   },
   piiMask(text: string, piiTypes?: string[]) {
     return request<PIIMaskData>("POST", "/api/governance/pii/mask", {

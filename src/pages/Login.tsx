@@ -30,6 +30,9 @@ const Login = () => {
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "邮箱格式不正确";
     if (!password) errs.password = "请输入密码";
     else if (password.length < 8) errs.password = "密码至少 8 位";
+    else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password)) {
+      errs.password = "密码必须包含大小写字母和数字";
+    }
     if (!isLogin) {
       if (!confirmPwd) errs.confirmPwd = "请确认密码";
       else if (confirmPwd !== password) errs.confirmPwd = "两次密码不一致";
@@ -94,6 +97,11 @@ const Login = () => {
           setErrors({});
           toast({ title: "需要二次验证", description: "请输入验证器动态码或恢复码完成登录" });
         } else {
+          // Reset MFA state on other errors
+          setMfaChallengeToken(null);
+          setMfaOtpCode("");
+          setMfaBackupCode("");
+          setUseBackupCode(false);
           toast({ title: isLogin ? "登录失败" : "注册失败", description: err.message, variant: "destructive" });
         }
       } else {

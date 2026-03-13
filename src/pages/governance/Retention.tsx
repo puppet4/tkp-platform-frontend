@@ -44,7 +44,7 @@ const Retention = () => {
   // Cleanup mutation
   const cleanupMut = useMutation({
     mutationFn: (data: { resource_type: string; dry_run: boolean }) =>
-      governanceApi.cleanupExpiredData(data.resource_type, data.dry_run),
+      governanceApi.retentionCleanup(data.resource_type, data.dry_run),
     onSuccess: (data: any) => {
       if (retentionDryRun) {
         toast.info(`预演模式：将删除 ${data.would_delete || 0} 条记录`);
@@ -58,6 +58,11 @@ const Retention = () => {
   // Create/Update policy mutation
   const savePolicyMut = useMutation({
     mutationFn: (data: typeof formData) => {
+      // Validate retention_days
+      if (data.retention_days < 1 || data.retention_days > 3650) {
+        throw new Error("保留天数必须在 1-3650 之间");
+      }
+
       if (editingPolicy) {
         return governanceApi.updateRetentionPolicy(
           data.resource_type,

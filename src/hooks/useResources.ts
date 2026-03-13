@@ -38,6 +38,7 @@ export function useUpdateWorkspace() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["workspaces"] });
       qc.invalidateQueries({ queryKey: ["workspace", vars.workspaceId] });
+      qc.invalidateQueries({ queryKey: ["workspace-members", vars.workspaceId] });
     },
   });
 }
@@ -46,7 +47,13 @@ export function useDeleteWorkspace() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => workspaceApi.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["workspaces"] }),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["workspaces"] });
+      qc.invalidateQueries({ queryKey: ["workspace", id] });
+      qc.invalidateQueries({ queryKey: ["workspace-members", id] });
+      // Invalidate all KBs in this workspace
+      qc.invalidateQueries({ queryKey: ["knowledge-bases"] });
+    },
   });
 }
 
@@ -182,7 +189,11 @@ export function useDeleteDocument() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (docId: string) => documentApi.delete(docId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+    onSuccess: (_, docId) => {
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      qc.invalidateQueries({ queryKey: ["document", docId] });
+      qc.invalidateQueries({ queryKey: ["kb-stats"] });
+    },
   });
 }
 
@@ -190,7 +201,10 @@ export function useReindexDocument() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (docId: string) => documentApi.reindex(docId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+    onSuccess: (_, docId) => {
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      qc.invalidateQueries({ queryKey: ["document", docId] });
+    },
   });
 }
 
@@ -198,7 +212,10 @@ export function useUploadDocument() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ kbId, file }: { kbId: string; file: File }) => documentApi.upload(kbId, file),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["documents", vars.kbId] });
+      qc.invalidateQueries({ queryKey: ["kb-stats", vars.kbId] });
+    },
   });
 }
 

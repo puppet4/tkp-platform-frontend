@@ -43,6 +43,25 @@ const WorkspaceDetail = () => {
   const { data: kbs = [], isLoading: kbsLoading } = useKnowledgeBases(workspaceId);
   const { data: members = [] } = useWorkspaceMembers(workspaceId || "", { enabled: showMembers && !!workspaceId });
 
+  // Handle workspace not found
+  if (!kbsLoading && workspaceId && !workspace) {
+    return (
+      <AppLayout>
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <p className="text-muted-foreground">工作空间不存在或无权访问</p>
+            <button
+              onClick={() => navigate("/workspaces")}
+              className="text-primary hover:underline"
+            >
+              返回工作空间列表
+            </button>
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
+
   const createKbMut = useCreateKb();
   const updateKbMut = useUpdateKb();
   const deleteKbMut = useDeleteKb();
@@ -51,11 +70,20 @@ const WorkspaceDetail = () => {
 
   const handleCreateKb = () => {
     if (!formName.trim() || !workspaceId) return;
+
+    const trimmedName = formName.trim();
+    const trimmedDesc = formDesc.trim();
+
+    if (trimmedName.length > 100) {
+      toast.error("知识库名称不能超过100个字符");
+      return;
+    }
+
     createKbMut.mutate(
       {
         workspace_id: workspaceId,
-        name: formName,
-        description: formDesc,
+        name: trimmedName,
+        description: trimmedDesc,
         embedding_model: formEmbedding,
         retrieval_strategy: formStrategy,
       },
@@ -73,11 +101,20 @@ const WorkspaceDetail = () => {
 
   const handleUpdateKb = () => {
     if (!editingKb || !formName.trim()) return;
+
+    const trimmedName = formName.trim();
+    const trimmedDesc = formDesc.trim();
+
+    if (trimmedName.length > 100) {
+      toast.error("知识库名称不能超过100个字符");
+      return;
+    }
+
     updateKbMut.mutate(
       {
         kbId: editingKb.id,
-        name: formName,
-        description: formDesc,
+        name: trimmedName,
+        description: trimmedDesc,
       },
       {
         onSuccess: () => {
@@ -101,8 +138,16 @@ const WorkspaceDetail = () => {
 
   const handleAddMember = () => {
     if (!memberUserId.trim() || !workspaceId) return;
+
+    const trimmedUserId = memberUserId.trim();
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(trimmedUserId)) {
+      toast.error("用户ID格式不正确");
+      return;
+    }
+
     upsertMemberMut.mutate(
-      { workspaceId, userId: memberUserId, role: memberRole },
+      { workspaceId, userId: trimmedUserId, role: memberRole },
       {
         onSuccess: () => {
           toast.success("成员已添加");

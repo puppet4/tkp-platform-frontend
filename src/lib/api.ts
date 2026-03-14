@@ -1041,6 +1041,52 @@ export const chatApi = {
   }) {
     return request<ChatCompletionResult>("POST", "/api/chat/completions", data);
   },
+  async completionsStream(
+    data: {
+      conversation_id?: string | null;
+      messages: Array<{ role: string; content: string }>;
+      kb_ids?: string[];
+    },
+    onChunk: (chunk: { type: string; data: any }) => void,
+  ) {
+    const token = getToken();
+    const response = await fetch(`${API_BASE}/api/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) throw new Error("No response body");
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split("\n");
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const json = JSON.parse(line.slice(6));
+            onChunk(json);
+          } catch (e) {
+            console.error("Failed to parse SSE:", e);
+          }
+        }
+      }
+    }
+  },
 };
 
 // ─── Agent types ─────────────────────────────────────────────────

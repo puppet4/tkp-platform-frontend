@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import {
   authApi,
   permissionsApi,
@@ -70,13 +70,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceAccessItem[]>([]);
   const [uiManifest, setUiManifest] = useState<PermissionUIManifestData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const isRefreshingRef = useRef(false);
 
   const refreshPermissions = useCallback(async () => {
     // Prevent concurrent refresh requests
-    if (isRefreshing) return;
+    if (isRefreshingRef.current) return;
 
-    setIsRefreshing(true);
+    isRefreshingRef.current = true;
     try {
       const manifest = await permissionsApi.uiManifest();
       setUiManifest(manifest);
@@ -85,9 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("Failed to refresh permissions:", error);
       // Don't clear user session on permission refresh failure
     } finally {
-      setIsRefreshing(false);
+      isRefreshingRef.current = false;
     }
-  }, [isRefreshing]);
+  }, []);
 
   // Fetch /auth/me + /permissions/ui-manifest
   const fetchIdentity = useCallback(async () => {
@@ -121,23 +121,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       setLoading(false);
     }
-  }, [fetchIdentity]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!user) return;
 
     const timer = window.setInterval(() => {
       refreshPermissions().catch(() => undefined);
-    }, 60_000);
+    }, 300_000);
+
+    let lastRefresh = Date.now();
+    const MIN_REFRESH_INTERVAL = 60_000;
 
     const onVisibility = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && Date.now() - lastRefresh > MIN_REFRESH_INTERVAL) {
+        lastRefresh = Date.now();
         refreshPermissions().catch(() => undefined);
       }
     };
 
     const onFocus = () => {
-      refreshPermissions().catch(() => undefined);
+      if (Date.now() - lastRefresh > MIN_REFRESH_INTERVAL) {
+        lastRefresh = Date.now();
+        refreshPermissions().catch(() => undefined);
+      }
     };
 
     window.addEventListener("focus", onFocus);

@@ -178,7 +178,7 @@ const Index = () => {
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie data={feedbackStats} cx="50%" cy="50%" innerRadius={45} outerRadius={72} paddingAngle={3} dataKey="value" strokeWidth={0}
-                  label={({ name, value }) => `${name}(${value})`} labelLine={false}>
+                  label={({ name, value }) => `${name} ${value}`} labelLine={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}>
                   {feedbackStats.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                 </Pie>
                 <Tooltip contentStyle={chartTooltipStyle} />

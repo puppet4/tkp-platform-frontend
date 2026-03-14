@@ -174,6 +174,14 @@ export function useDocuments(kbId: string, options?: { enabled?: boolean }) {
     queryKey: ["documents", kbId],
     queryFn: () => documentApi.list(kbId),
     enabled: options?.enabled !== false && !!kbId,
+    refetchInterval: (query) => {
+      // 如果有文档处于 pending 或 processing 状态，每 3 秒轮询一次
+      const docs = query.state.data as any[];
+      if (docs?.some((doc: any) => doc.status === "pending" || doc.status === "processing")) {
+        return 3000;
+      }
+      return false;
+    },
   });
 }
 
@@ -211,7 +219,11 @@ export function useReindexDocument() {
 export function useUploadDocument() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ kbId, file }: { kbId: string; file: File }) => documentApi.upload(kbId, file),
+    mutationFn: ({ kbId, file }: { kbId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return documentApi.upload(kbId, formData);
+    },
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["documents", vars.kbId] });
       qc.invalidateQueries({ queryKey: ["kb-stats", vars.kbId] });

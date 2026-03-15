@@ -26,11 +26,20 @@ import {
   Copy,
   RotateCw,
   ArrowDown,
+  User,
+  Sparkles,
 } from "lucide-react";
 import { FormDialog, FormField, DialogButton, FormInput } from "@/components/FormDialog";
 import ReactMarkdown from "react-markdown";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { DocumentPreviewSheet } from "@/components/DocumentPreviewSheet";
+
+function formatMsgTime(iso: string) {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const Chat = () => {
   const qc = useQueryClient();
@@ -47,6 +56,7 @@ const Chat = () => {
   const [showRenameConv, setShowRenameConv] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -356,7 +366,7 @@ const Chat = () => {
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-foreground truncate">{conv.title}</div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
-                  {conv.message_count} 条消息 · {new Date(conv.updated_at).toLocaleDateString("zh-CN")}
+                  {new Date(conv.updated_at).toLocaleDateString("zh-CN")}
                 </div>
               </div>
               <button
@@ -433,7 +443,7 @@ const Chat = () => {
                 </h3>
                 <div className="text-[11px] text-muted-foreground">
                   {selectedConvView
-                    ? `${selectedConvView.message_count} 条消息`
+                    ? new Date(selectedConvView.updated_at).toLocaleDateString("zh-CN")
                     : selectedKbs.length > 0
                       ? `已选 ${selectedKbs.length} 个知识库`
                       : "选择知识库开始对话"}
@@ -453,8 +463,8 @@ const Chat = () => {
             )}
           </div>
 
-          <div className="flex-1 overflow-auto" ref={messagesContainerRef}>
-            <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+          <div className="flex-1 overflow-auto scrollbar-thin scrollbar-thumb-border/40" ref={messagesContainerRef}>
+            <div className="max-w-3xl mx-auto px-6 md:px-10 py-8 space-y-8">
               {msgsLoading && selectedConvId ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-5 w-5 text-primary animate-spin" />
@@ -469,140 +479,133 @@ const Chat = () => {
                 </div>
               ) : null}
 
-              {messages.map((msg) => (
+              {messages.map((msg) => {
+                const isAssistant = msg.role === "assistant";
+                const isThinking = isAssistant && !msg.content && isStreaming && msg.id.startsWith("assistant-");
+                const isStreamingThis = isStreaming && msg.id.startsWith("assistant-");
+                return (
                 <div key={msg.id} className="group">
-                  <div className={`rounded-2xl px-6 py-4 ${
-                    msg.role === "user"
-                      ? "bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20"
-                      : "bg-gradient-to-br from-card to-secondary/20 border border-border/50 shadow-sm"
-                  }`}>
-                    <div className="flex items-start gap-4">
-                      {/* Avatar */}
-                      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                        msg.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-gradient-to-br from-violet-500 to-purple-600 text-white"
-                      }`}>
-                        {msg.role === "user" ? "U" : "AI"}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        {msg.role === "assistant" ? (
-                          <div className="prose prose-sm max-w-none break-words prose-headings:text-foreground prose-headings:font-semibold prose-p:text-foreground prose-p:leading-7 prose-p:my-3 prose-p:break-words prose-strong:text-foreground prose-strong:font-semibold prose-code:text-violet-600 prose-code:bg-violet-50 dark:prose-code:bg-violet-950/30 dark:prose-code:text-violet-400 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:break-all prose-pre:bg-slate-900 dark:prose-pre:bg-slate-950 prose-pre:border prose-pre:border-border/50 prose-pre:rounded-xl prose-pre:shadow-inner prose-pre:overflow-x-auto prose-li:text-foreground prose-ul:my-3 prose-ol:my-3 prose-li:my-1 prose-li:break-words">
-                            <ReactMarkdown
-                              components={{
-                                html: () => null,
-                              }}
-                            >
-                              {msg.content}
-                            </ReactMarkdown>
-                          </div>
-                        ) : (
-                          <div className="text-[15px] leading-7 text-foreground whitespace-pre-wrap break-words font-normal">{msg.content}</div>
-                        )}
-
-                        {/* Citations */}
-                        {msg.role === "assistant" && msg.citations && msg.citations.length > 0 && (
-                          <div className="mt-5 pt-4 border-t border-border/50">
-                            <button
-                              onClick={() => setShowCitations(showCitations === msg.id ? null : msg.id)}
-                              className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group/cite"
-                            >
-                              <BookOpen className="h-4 w-4 text-violet-500" />
-                              <span>{msg.citations.length} 个引用来源</span>
-                              <ChevronDown className={`h-4 w-4 transition-transform ${showCitations === msg.id ? "rotate-180" : ""}`} />
-                            </button>
-                            {showCitations === msg.id && (
-                              <div className="mt-3 space-y-2.5">
-                                {msg.citations.map((citation: any, idx: number) => (
-                                  <div key={idx} className="text-xs p-4 rounded-xl bg-gradient-to-br from-secondary/50 to-secondary/30 border border-border/50 hover:border-primary/30 transition-colors">
-                                    <div className="flex items-start gap-2 mb-2">
-                                      <FileText className="h-3.5 w-3.5 text-violet-500 mt-0.5 flex-shrink-0" />
-                                      <div className="flex-1 min-w-0">
-                                        <div className="font-semibold text-foreground mb-1">
-                                          {citation.document_title || "未命名文档"}
-                                        </div>
-                                        <div className="text-muted-foreground leading-relaxed line-clamp-2">
-                                          {citation.snippet || citation.content?.substring(0, 150)}
-                                        </div>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground mt-2 pt-2 border-t border-border/30">
-                                      <span className="flex items-center gap-1">
-                                        <Database className="h-3 w-3" />
-                                        {citation.kb_name}
-                                      </span>
-                                      <span className="flex items-center gap-1">
-                                        <span className="w-1 h-1 rounded-full bg-muted-foreground/50" />
-                                        相似度 {(citation.similarity * 100).toFixed(1)}%
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                  <div className="flex items-start gap-3.5">
+                    {/* Avatar */}
+                    <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center mt-0.5 ${
+                      isAssistant
+                        ? "bg-gradient-to-br from-violet-500/15 to-purple-500/15"
+                        : "bg-emerald-500/15"
+                    }`}>
+                      {isAssistant
+                        ? <Sparkles className="h-4 w-4 text-violet-500" />
+                        : <User className="h-4 w-4 text-emerald-600" />}
                     </div>
 
-                    {/* Message actions */}
-                    <div className="flex items-center gap-1 mt-3 ml-12 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => copyToClipboard(msg.content)}
-                        className="p-1.5 rounded-lg hover:bg-secondary/80 transition-colors"
-                        title="复制"
-                      >
-                        <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-                      </button>
-                      {msg.role === "assistant" && (
-                        <>
+                    {/* Content column */}
+                    <div className="flex-1 min-w-0">
+                      {/* Header: role + time */}
+                      <div className="flex items-baseline gap-2 mb-1.5">
+                        <span className="text-[13px] font-semibold text-foreground">
+                          {isAssistant ? "AI 助手" : "用户"}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground/60">
+                          {formatMsgTime(msg.created_at)}
+                        </span>
+                      </div>
+
+                      {/* Body */}
+                      {isThinking ? (
+                        <div className="flex items-center gap-2 py-2">
+                          <div className="flex gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-bounce" style={{ animationDelay: "0ms" }} />
+                            <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-bounce" style={{ animationDelay: "150ms" }} />
+                            <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-bounce" style={{ animationDelay: "300ms" }} />
+                          </div>
+                          <span className="text-[13px] text-muted-foreground">正在思考...</span>
+                        </div>
+                      ) : isAssistant ? (
+                        <div className="prose prose-[15px] max-w-none break-words leading-relaxed prose-headings:text-foreground prose-headings:font-semibold prose-p:text-foreground prose-p:leading-7 prose-p:my-2.5 prose-strong:text-foreground prose-code:text-violet-600 prose-code:bg-violet-50 dark:prose-code:bg-violet-950/30 dark:prose-code:text-violet-400 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[13px] prose-code:font-mono prose-pre:bg-zinc-900 dark:prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-border/30 prose-pre:rounded-lg prose-pre:overflow-x-auto prose-li:text-foreground prose-ul:my-2.5 prose-ol:my-2.5 prose-li:my-0.5">
+                          <ReactMarkdown components={{ html: () => null }}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <div className="text-[15px] leading-7 text-foreground whitespace-pre-wrap break-words">
+                          {msg.content}
+                        </div>
+                      )}
+
+                      {/* Citations */}
+                      {isAssistant && msg.citations && msg.citations.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-border/30">
                           <button
-                            onClick={() => handleRegenerate(msg.id)}
-                            className="p-1.5 rounded-lg hover:bg-secondary/80 transition-colors"
-                            title="重新生成"
+                            onClick={() => setShowCitations(showCitations === msg.id ? null : msg.id)}
+                            className="flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
                           >
-                            <RotateCw className="h-3.5 w-3.5 text-muted-foreground" />
+                            <BookOpen className="h-3.5 w-3.5 text-violet-500" />
+                            <span>{msg.citations.length} 个引用来源</span>
+                            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showCitations === msg.id ? "rotate-180" : ""}`} />
                           </button>
-                          <div className="flex-1" />
+                          {showCitations === msg.id && (
+                            <div className="mt-2.5 space-y-2">
+                              {msg.citations.map((citation: any, idx: number) => (
+                                <div key={idx}
+                                  className="text-[12px] px-3.5 py-2.5 rounded-lg bg-secondary/40 border border-border/30 hover:border-primary/20 transition-colors cursor-pointer"
+                                  onClick={() => citation.document_id && setPreviewDocId(citation.document_id)}
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <FileText className="h-3.5 w-3.5 text-violet-500 mt-0.5 flex-shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                      <span className="font-medium text-foreground">{citation.document_title || "未命名文档"}</span>
+                                      <span className="text-muted-foreground ml-2">{citation.snippet || citation.content?.substring(0, 100)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Footer actions — hidden during streaming, subtle on hover */}
+                      {!(isStreamingThis) && (
+                        <div className="flex items-center gap-0.5 mt-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => feedbackMutation.mutate({ feedback_type: "thumbs_up", message_id: msg.id })}
-                            className="p-1.5 rounded-lg hover:bg-green-500/10 transition-colors"
-                            title="好评"
+                            onClick={() => copyToClipboard(msg.content)}
+                            className="p-1.5 rounded-md hover:bg-secondary transition-colors"
+                            title="复制"
                           >
-                            <ThumbsUp className="h-3.5 w-3.5 text-muted-foreground hover:text-green-600" />
+                            <Copy className="h-3.5 w-3.5 text-muted-foreground/60 hover:text-muted-foreground" />
                           </button>
-                          <button
-                            onClick={() => feedbackMutation.mutate({ feedback_type: "thumbs_down", message_id: msg.id })}
-                            className="p-1.5 rounded-lg hover:bg-red-500/10 transition-colors"
-                            title="差评"
-                          >
-                            <ThumbsDown className="h-3.5 w-3.5 text-muted-foreground hover:text-red-600" />
-                          </button>
-                        </>
+                          {isAssistant && (
+                            <>
+                              <button
+                                onClick={() => handleRegenerate(msg.id)}
+                                className="p-1.5 rounded-md hover:bg-secondary transition-colors"
+                                title="重新生成"
+                              >
+                                <RotateCw className="h-3.5 w-3.5 text-muted-foreground/60 hover:text-muted-foreground" />
+                              </button>
+                              <div className="w-px h-3.5 bg-border/50 mx-1" />
+                              <button
+                                onClick={() => feedbackMutation.mutate({ feedback_type: "thumbs_up", message_id: msg.id })}
+                                className="p-1.5 rounded-md hover:bg-green-500/10 transition-colors"
+                                title="好评"
+                              >
+                                <ThumbsUp className="h-3.5 w-3.5 text-muted-foreground/60 hover:text-green-600" />
+                              </button>
+                              <button
+                                onClick={() => feedbackMutation.mutate({ feedback_type: "thumbs_down", message_id: msg.id })}
+                                className="p-1.5 rounded-md hover:bg-red-500/10 transition-colors"
+                                title="差评"
+                              >
+                                <ThumbsDown className="h-3.5 w-3.5 text-muted-foreground/60 hover:text-red-600" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
                 </div>
-              ))}
-
-              {isStreaming && (
-                <div className="group">
-                  <div className="rounded-2xl px-6 py-4 bg-gradient-to-br from-card to-secondary/20 border border-border/50 shadow-sm">
-                    <div className="flex items-start gap-4">
-                      <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium bg-gradient-to-br from-violet-500 to-purple-600 text-white">
-                        AI
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Loader2 className="h-4 w-4 text-violet-500 animate-spin" />
-                          <span className="text-sm text-muted-foreground">正在思考...</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+                );
+              })}
 
               <div ref={messagesEndRef} />
             </div>
@@ -612,15 +615,15 @@ const Chat = () => {
           {showScrollButton && (
             <button
               onClick={scrollToBottom}
-              className="absolute bottom-32 left-1/2 -translate-x-1/2 p-2 rounded-full bg-card border border-border shadow-lg hover:bg-secondary transition-colors z-10"
+              className="absolute bottom-28 left-1/2 -translate-x-1/2 p-2 rounded-full bg-card border border-border shadow-lg hover:bg-secondary transition-colors z-10"
             >
               <ArrowDown className="h-4 w-4 text-muted-foreground" />
             </button>
           )}
 
           {/* Input area */}
-          <div className="border-t border-border/50 bg-gradient-to-b from-background to-secondary/10">
-            <div className="max-w-3xl mx-auto px-4 py-4">
+          <div className="border-t border-border/30 bg-background">
+            <div className="max-w-3xl mx-auto px-6 md:px-10 py-4">
               <form onSubmit={handleSend} className="relative">
                 <textarea
                   ref={textareaRef}
@@ -630,20 +633,21 @@ const Chat = () => {
                   placeholder="输入您的问题..."
                   disabled={isStreaming}
                   rows={1}
-                  className="w-full resize-none rounded-2xl border border-border/50 bg-card/50 backdrop-blur-sm px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500/50 transition-all disabled:opacity-50 max-h-[200px] overflow-y-auto shadow-sm scrollbar-thin"
-                  style={{ minHeight: "56px" }}
+                  className="w-full resize-none rounded-xl border border-border/50 bg-secondary/30 px-4 py-3.5 pr-13 text-[15px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-violet-500/30 focus:border-violet-500/40 transition-all disabled:opacity-50 max-h-[200px] overflow-y-auto"
+                  style={{ minHeight: "52px" }}
                 />
                 <button
                   type="submit"
                   disabled={isStreaming || !input.trim()}
-                  className="absolute right-3 bottom-3 h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 text-white flex items-center justify-center hover:from-violet-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                  className="absolute right-2.5 bottom-2.5 h-9 w-9 rounded-lg bg-violet-500 text-white flex items-center justify-center hover:bg-violet-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Send className="h-4 w-4" />
                 </button>
               </form>
-              <div className="text-[11px] text-muted-foreground/70 text-center mt-2.5">
-                按 <kbd className="px-1.5 py-0.5 rounded bg-secondary/50 border border-border/50 font-mono text-[10px]">Enter</kbd> 发送，
-                <kbd className="px-1.5 py-0.5 rounded bg-secondary/50 border border-border/50 font-mono text-[10px]">Shift + Enter</kbd> 换行
+              <div className="text-[11px] text-muted-foreground/50 text-center mt-2">
+                <kbd className="px-1 py-0.5 rounded bg-secondary/50 border border-border/30 font-mono text-[10px]">Enter</kbd> 发送
+                <span className="mx-1.5">·</span>
+                <kbd className="px-1 py-0.5 rounded bg-secondary/50 border border-border/30 font-mono text-[10px]">Shift+Enter</kbd> 换行
               </div>
             </div>
           </div>
@@ -723,6 +727,12 @@ const Chat = () => {
           <FormInput value={renameTitle} onChange={setRenameTitle} placeholder="输入会话标题" />
         </FormField>
       </FormDialog>
+
+      <DocumentPreviewSheet
+        open={!!previewDocId}
+        onOpenChange={(open) => { if (!open) setPreviewDocId(null); }}
+        documentId={previewDocId || undefined}
+      />
     </AppLayout>
   );
 };

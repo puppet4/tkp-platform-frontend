@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { AppLayout } from "@/components/AppLayout";
-import { FileText, Plus, ArrowLeft, Upload, Loader2, Trash2, RefreshCw, Users, Folder, ChevronRight, ChevronDown, Pencil } from "lucide-react";
+import { FileText, Plus, ArrowLeft, Upload, Loader2, Trash2, RefreshCw, Users, Folder, ChevronRight, ChevronDown, Pencil, Eye } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { FormDialog, FormField, FormInput, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
+import { useConfirm } from "@/hooks/useConfirm";
 import { BatchUploadDialog } from "@/components/BatchUploadDialog";
 import {
   useKnowledgeBases,
@@ -13,12 +14,14 @@ import {
   useDeleteDocument,
   useBatchDeleteDocuments,
   useReindexDocument,
+  useBatchReindexDocuments,
   useUpdateDocument,
   useKbMembers,
   useUpsertKbMember,
   useRemoveKbMember,
 } from "@/hooks/useResources";
 import { handleApiError } from "@/lib/error-handler";
+import { DocumentPreviewSheet } from "@/components/DocumentPreviewSheet";
 import type { DocumentData, KbMemberData } from "@/lib/api";
 
 interface FolderNode {
@@ -79,6 +82,7 @@ const KnowledgeBaseDetail = () => {
   const { kbId } = useParams<{ kbId: string }>();
   const navigate = useNavigate();
   const { canAction } = useRoleAccess();
+  const confirm = useConfirm();
 
   const [showBatchUpload, setShowBatchUpload] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
@@ -86,6 +90,7 @@ const KnowledgeBaseDetail = () => {
   const [memberRole, setMemberRole] = useState("viewer");
   const [renamingDoc, setRenamingDoc] = useState<DocumentData | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null);
 
   const canDocumentWrite = canAction("api.document.write");
   const canDocumentDelete = canAction("api.document.delete");
@@ -128,24 +133,44 @@ const KnowledgeBaseDetail = () => {
   const deleteMut = useDeleteDocument();
   const batchDeleteMut = useBatchDeleteDocuments();
   const reindexMut = useReindexDocument();
+  const batchReindexMut = useBatchReindexDocuments();
   const updateDocMut = useUpdateDocument();
   const upsertMemberMut = useUpsertKbMember();
   const removeMemberMut = useRemoveKbMember();
 
-  const handleDelete = (doc: DocumentData) => {
-    if (!confirm(`确定要删除文档"${doc.title}"吗？`)) return;
+  const handleDelete = async (doc: DocumentData) => {
+    if (!await confirm({ title: "删除文档", message: `确定要删除文档"${doc.title}"吗？`, confirmLabel: "删除" })) return;
     deleteMut.mutate(doc.id, {
       onSuccess: () => toast.success("文档已删除"),
       onError: (error) => toast.error(handleApiError(error)),
     });
   };
 
-  const handleDeleteFolder = (folder: FolderNode) => {
+  const handleDeleteFolder = async (folder: FolderNode) => {
     const allDocs = collectFolderDocs(folder);
     if (allDocs.length === 0) return;
-    if (!confirm(`确定要删除文件夹"${folder.name}"及其中 ${allDocs.length} 个文档吗？`)) return;
+    if (!await confirm({ title: "删除文件夹", message: `确定要删除文件夹"${folder.name}"及其中 ${allDocs.length} 个文档吗？`, confirmLabel: "删除" })) return;
     batchDeleteMut.mutate(allDocs.map((d) => d.id), {
       onSuccess: () => toast.success(`已删除 ${allDocs.length} 个文档`),
+      onError: (error) => toast.error(handleApiError(error)),
+    });
+  };
+
+  const handleReindexFolder = async (folder: FolderNode) => {
+    const allDocs = collectFolderDocs(folder);
+    if (allDocs.length === 0) return;
+    if (!await confirm({ title: "重新索引文件夹", message: `确定要重新索引文件夹"${folder.name}"中的 ${allDocs.length} 个文档吗？`, variant: "warning", confirmLabel: "重新索引" })) return;
+    batchReindexMut.mutate(allDocs.map((d) => d.id), {
+      onSuccess: (data: any) => toast.success(`已提交 ${data.submitted} 个重新索引任务`),
+      onError: (error) => toast.error(handleApiError(error)),
+    });
+  };
+
+  const handleReindexAll = async () => {
+    if (documents.length === 0) return;
+    if (!await confirm({ title: "全部重新索引", message: `确定要重新索引知识库中的 ${documents.length} 个文档吗？这可能需要一些时间。`, variant: "warning", confirmLabel: "重新索引" })) return;
+    batchReindexMut.mutate(documents.map((d: DocumentData) => d.id), {
+      onSuccess: (data: any) => toast.success(`已提交 ${data.submitted} 个重新索引任务`),
       onError: (error) => toast.error(handleApiError(error)),
     });
   };
@@ -164,8 +189,8 @@ const KnowledgeBaseDetail = () => {
     );
   };
 
-  const handleReindex = (doc: DocumentData) => {
-    if (!confirm(`确定要重新索引文档"${doc.title}"吗？`)) return;
+  const handleReindex = async (doc: DocumentData) => {
+    if (!await confirm({ title: "重新索引", message: `确定要重新索引文档"${doc.title}"吗？`, variant: "warning", confirmLabel: "重新索引" })) return;
     reindexMut.mutate(doc.id, {
       onSuccess: () => toast.success("重新索引任务已提交"),
       onError: (error) => toast.error(handleApiError(error)),
@@ -195,8 +220,8 @@ const KnowledgeBaseDetail = () => {
     );
   };
 
-  const handleRemoveMember = (userId: string) => {
-    if (!kbId || !confirm("确定要移除该成员吗？")) return;
+  const handleRemoveMember = async (userId: string) => {
+    if (!kbId || !await confirm({ title: "移除成员", message: "确定要移除该成员吗？", confirmLabel: "移除" })) return;
     removeMemberMut.mutate(
       { kbId, userId },
       {
@@ -242,6 +267,16 @@ const KnowledgeBaseDetail = () => {
               >
                 <Users className="w-4 h-4" />
                 成员管理
+              </button>
+            )}
+            {canDocumentWrite && documents.length > 0 && (
+              <button
+                onClick={handleReindexAll}
+                disabled={batchReindexMut.isPending}
+                className="px-4 py-2 border rounded-md hover:bg-muted flex items-center gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${batchReindexMut.isPending ? "animate-spin" : ""}`} />
+                {batchReindexMut.isPending ? "提交中..." : "全部重新索引"}
               </button>
             )}
             {canDocumentWrite && (
@@ -300,7 +335,7 @@ const KnowledgeBaseDetail = () => {
                       key={doc.id}
                       className="flex items-center justify-between p-4 border rounded-md hover:bg-muted/50 cursor-pointer"
                       style={{ marginLeft: depth * 20 }}
-                      onClick={() => navigate(`/documents/${doc.id}`)}
+                      onClick={() => setPreviewDocId(doc.id)}
                     >
                       <div className="flex items-center gap-3">
                         <FileText className="w-5 h-5 text-muted-foreground" />
@@ -316,12 +351,12 @@ const KnowledgeBaseDetail = () => {
                           className={`px-2 py-1 text-xs rounded ${
                             doc.status === "ready"
                               ? "bg-green-100 text-green-800"
-                              : doc.status === "processing"
-                              ? "bg-blue-100 text-blue-800"
+                              : doc.status === "pending" || doc.status === "processing" || doc.status === "queued"
+                              ? "bg-amber-100 text-amber-800"
                               : "bg-red-100 text-red-800"
                           }`}
                         >
-                          {doc.status === "ready" ? "就绪" : doc.status === "processing" ? "处理中" : "失败"}
+                          {doc.status === "ready" ? "就绪" : doc.status === "pending" ? "等待中" : doc.status === "processing" ? "处理中" : doc.status === "queued" ? "队列中" : "失败"}
                         </span>
                         {canDocumentWrite && (
                           <button
@@ -369,15 +404,26 @@ const KnowledgeBaseDetail = () => {
                             <span className="font-medium">{folder.name}</span>
                             <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{total}</span>
                           </div>
-                          {canDocumentDelete && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder); }}
-                              className="p-2 hover:bg-destructive/10 text-destructive rounded-md"
-                              title="删除文件夹"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                            {canDocumentWrite && (
+                              <button
+                                onClick={() => handleReindexFolder(folder)}
+                                className="p-2 hover:bg-muted rounded-md"
+                                title="重新索引文件夹"
+                              >
+                                <RefreshCw className="w-4 h-4" />
+                              </button>
+                            )}
+                            {canDocumentDelete && (
+                              <button
+                                onClick={() => handleDeleteFolder(folder)}
+                                className="p-2 hover:bg-destructive/10 text-destructive rounded-md"
+                                title="删除文件夹"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                         {expanded && (
                           <>
@@ -491,6 +537,13 @@ const KnowledgeBaseDetail = () => {
             </div>
           </div>
         </FormDialog>
+
+        {/* Document Preview */}
+        <DocumentPreviewSheet
+          open={!!previewDocId}
+          onOpenChange={(open) => { if (!open) setPreviewDocId(null); }}
+          documentId={previewDocId || undefined}
+        />
       </div>
     </AppLayout>
   );

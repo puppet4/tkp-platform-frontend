@@ -5,6 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { useBatchUpload, type FileItem, type BatchPhase } from "@/hooks/useBatchUpload";
 import { useImportBatch } from "@/hooks/useResources";
 import { useQueryClient } from "@tanstack/react-query";
+import { useConfirm } from "@/hooks/useConfirm";
 
 const ACCEPTED_EXTENSIONS = [".pdf", ".md", ".docx", ".txt", ".html", ".csv", ".pptx"];
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -44,6 +45,7 @@ export function BatchUploadDialog({ open, onClose, kbId }: BatchUploadDialogProp
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
+  const confirm = useConfirm();
 
   const {
     files, addFiles, removeFile, clearFiles,
@@ -85,9 +87,9 @@ export function BatchUploadDialog({ open, onClose, kbId }: BatchUploadDialogProp
     e.stopPropagation();
   }, []);
 
-  const handleClose = () => {
+  const handleClose = async () => {
     if (phase === "uploading") {
-      if (!confirm("正在上传中，确定要关闭吗？")) return;
+      if (!await confirm({ title: "中断上传", message: "正在上传中，确定要关闭吗？", variant: "warning", confirmLabel: "关闭" })) return;
       cancelUpload();
     }
     if (phase === "done" || phase === "uploading") {

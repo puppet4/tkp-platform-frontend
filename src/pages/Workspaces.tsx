@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { FormDialog, FormField, FormInput, FormTextarea, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
+import { useConfirm } from "@/hooks/useConfirm";
 import { useWorkspaces, useCreateWorkspace, useDeleteWorkspace, useUpdateWorkspace } from "@/hooks/useResources";
 import { handleApiError } from "@/lib/error-handler";
 import type { WorkspaceData } from "@/lib/api";
@@ -12,6 +13,7 @@ import type { WorkspaceData } from "@/lib/api";
 const Workspaces = () => {
   const navigate = useNavigate();
   const { canAction } = useRoleAccess();
+  const confirm = useConfirm();
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [editingWs, setEditingWs] = useState<WorkspaceData | null>(null);
@@ -70,8 +72,8 @@ const Workspaces = () => {
     );
   };
 
-  const handleDelete = (ws: WorkspaceData) => {
-    if (!confirm(`确定要删除工作空间"${ws.name}"吗？`)) return;
+  const handleDelete = async (ws: WorkspaceData) => {
+    if (!await confirm({ title: "删除工作空间", message: `确定要删除工作空间"${ws.name}"吗？`, confirmLabel: "删除" })) return;
     deleteMut.mutate(ws.workspace_id, {
       onSuccess: () => toast.success("工作空间已删除"),
       onError: (error) => toast.error(handleApiError(error)),

@@ -232,6 +232,17 @@ export function useReindexDocument() {
   });
 }
 
+export function useBatchReindexDocuments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (docIds: string[]) => documentApi.batchReindex(docIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["documents"] });
+      qc.invalidateQueries({ queryKey: ["kb-stats"] });
+    },
+  });
+}
+
 export function useUploadDocument() {
   const qc = useQueryClient();
   return useMutation({

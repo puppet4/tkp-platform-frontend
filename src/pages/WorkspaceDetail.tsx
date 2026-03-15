@@ -5,6 +5,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { FormDialog, FormField, FormInput, FormTextarea, FormSelect, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
+import { useConfirm } from "@/hooks/useConfirm";
 import {
   useWorkspaces,
   useKnowledgeBases,
@@ -22,6 +23,7 @@ const WorkspaceDetail = () => {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const navigate = useNavigate();
   const { canAction } = useRoleAccess();
+  const confirm = useConfirm();
 
   const [showCreateKb, setShowCreateKb] = useState(false);
   const [editingKb, setEditingKb] = useState<KnowledgeBaseData | null>(null);
@@ -128,8 +130,8 @@ const WorkspaceDetail = () => {
     );
   };
 
-  const handleDeleteKb = (kb: KnowledgeBaseData) => {
-    if (!confirm(`确定要删除知识库"${kb.name}"吗？`)) return;
+  const handleDeleteKb = async (kb: KnowledgeBaseData) => {
+    if (!await confirm({ title: "删除知识库", message: `确定要删除知识库"${kb.name}"吗？`, confirmLabel: "删除" })) return;
     deleteKbMut.mutate(kb.id, {
       onSuccess: () => toast.success("知识库已删除"),
       onError: (error) => toast.error(handleApiError(error)),
@@ -159,8 +161,8 @@ const WorkspaceDetail = () => {
     );
   };
 
-  const handleRemoveMember = (userId: string) => {
-    if (!workspaceId || !confirm("确定要移除该成员吗？")) return;
+  const handleRemoveMember = async (userId: string) => {
+    if (!workspaceId || !await confirm({ title: "移除成员", message: "确定要移除该成员吗？", confirmLabel: "移除" })) return;
     removeMemberMut.mutate(
       { workspaceId, userId },
       {

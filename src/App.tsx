@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ConfirmProvider } from "@/hooks/useConfirm";
 
 const Index = lazy(() => import("./pages/Index"));
 const Login = lazy(() => import("./pages/Login"));
@@ -151,9 +152,11 @@ const App = () => (
         <Toaster />
         <Sonner />
         <AuthProvider>
-          <BrowserRouter>
-            <AppRoutes />
-          </BrowserRouter>
+          <ConfirmProvider>
+            <BrowserRouter>
+              <AppRoutes />
+            </BrowserRouter>
+          </ConfirmProvider>
         </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>

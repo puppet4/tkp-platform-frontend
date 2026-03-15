@@ -6,11 +6,13 @@ import { opsApi, type ReleaseRolloutData, type AlertWebhookData } from "@/lib/ap
 import { FormDialog, FormField, FormInput, FormTextarea, FormSelect, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
+import { useConfirm } from "@/hooks/useConfirm";
 import { handleApiError } from "@/lib/error-handler";
 
 const Releases = () => {
   const qc = useQueryClient();
   const { roleName } = useRoleAccess();
+  const confirm = useConfirm();
   const [showNewRelease, setShowNewRelease] = useState(false);
   const [showNewWebhook, setShowNewWebhook] = useState(false);
   const [editingWebhook, setEditingWebhook] = useState<AlertWebhookData | null>(null);
@@ -227,8 +229,8 @@ const Releases = () => {
                       </div>
                       {release.status === "in_progress" && (
                         <button
-                          onClick={() => {
-                            if (confirm("确定要回滚此发布吗？")) {
+                          onClick={async () => {
+                            if (await confirm({ title: "回滚发布", message: "确定要回滚此发布吗？", variant: "warning", confirmLabel: "回滚" })) {
                               rollbackReleaseMut.mutate(release.rollout_id);
                             }
                           }}
@@ -296,8 +298,8 @@ const Releases = () => {
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm("确定要删除此 Webhook 吗？")) {
+                          onClick={async () => {
+                            if (await confirm({ title: "删除 Webhook", message: "确定要删除此 Webhook 吗？", confirmLabel: "删除" })) {
                               deleteWebhookMut.mutate(webhook.webhook_id);
                             }
                           }}

@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/AppLayout";
 import { DialogButton, FormDialog, FormField, FormInput } from "@/components/FormDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
+import { useConfirm } from "@/hooks/useConfirm";
 import {
   tenantApi,
   usersApi,
@@ -22,6 +23,7 @@ const TenantAdmin = () => {
   const qc = useQueryClient();
   const { currentTenant, switchTenant } = useAuth();
   const { canAction } = useRoleAccess();
+  const confirm = useConfirm();
 
   const canTenantRead = canAction("api.tenant.read");
   const canTenantCreate = canAction("api.tenant.create");
@@ -246,8 +248,8 @@ const TenantAdmin = () => {
             )}
             {canTenantDelete && selectedTenantId && (
               <button
-                onClick={() => {
-                  if (!confirm("确认删除当前租户？此操作会归档关联资源并禁用成员关系。")) return;
+                onClick={async () => {
+                  if (!await confirm({ title: "删除租户", message: "确认删除当前租户？", warning: "此操作会归档关联资源并禁用成员关系。", confirmLabel: "删除" })) return;
                   deleteTenantMutation.mutate(selectedTenantId);
                 }}
                 disabled={deleteTenantMutation.isPending}

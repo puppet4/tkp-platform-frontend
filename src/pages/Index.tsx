@@ -126,8 +126,6 @@ const Index = () => {
     () => [
       { name: "好评", value: feedbackItems.filter((f) => f.feedback_type === "thumbs_up").length, color: "hsl(var(--success))" },
       { name: "差评", value: feedbackItems.filter((f) => f.feedback_type === "thumbs_down").length, color: "hsl(var(--destructive))" },
-      { name: "评论", value: feedbackItems.filter((f) => f.feedback_type === "comment").length, color: "hsl(var(--info))" },
-      { name: "评分", value: feedbackItems.filter((f) => f.feedback_type === "rating").length, color: "hsl(var(--warning))" },
     ],
     [feedbackItems],
   );
@@ -178,7 +176,13 @@ const Index = () => {
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie data={feedbackStats} cx="50%" cy="50%" innerRadius={45} outerRadius={72} paddingAngle={3} dataKey="value" strokeWidth={0}
-                  label={({ name, value }) => `${name} ${value}`} labelLine={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}>
+                  label={({ cx, cy, midAngle, outerRadius: or2, name, value }) => {
+                    const RADIAN = Math.PI / 180;
+                    const r = or2 + 18;
+                    const x = cx + r * Math.cos(-midAngle * RADIAN);
+                    const y = cy + r * Math.sin(-midAngle * RADIAN);
+                    return <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" fontSize={11} fill="hsl(var(--muted-foreground))">{`${name} ${value}`}</text>;
+                  }} labelLine={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}>
                   {feedbackStats.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                 </Pie>
                 <Tooltip contentStyle={chartTooltipStyle} />

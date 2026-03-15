@@ -4,6 +4,7 @@ import { retrievalApi, kbApi, type RetrievalHitData, type KnowledgeBaseData } fr
 import { Search, SlidersHorizontal, FileText, Database, Loader2, AlertCircle, ChevronDown } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { DocumentPreviewSheet } from "@/components/DocumentPreviewSheet";
 
 const SearchPage = () => {
   const [searchParams] = useSearchParams();
@@ -12,6 +13,7 @@ const SearchPage = () => {
   const [strategy, setStrategy] = useState<"hybrid" | "vector" | "keyword">("hybrid");
   const [topK, setTopK] = useState(8);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState<string | null>(searchParams.get("q"));
@@ -167,7 +169,8 @@ const SearchPage = () => {
             {result.hits.map((r: RetrievalHitData) => (
               <div
                 key={r.chunk_id}
-                className="bg-card rounded-lg border border-border p-4 shadow-xs hover:shadow-card-hover transition-shadow"
+                className="bg-card rounded-lg border border-border p-4 shadow-xs hover:shadow-card-hover transition-shadow cursor-pointer"
+                onClick={() => setPreviewDocId(r.document_id)}
               >
                 <div className="flex items-start gap-3">
                   <FileText className="h-4 w-4 text-primary mt-0.5 shrink-0" />
@@ -218,6 +221,12 @@ const SearchPage = () => {
           </div>
         )}
       </div>
+
+      <DocumentPreviewSheet
+        open={!!previewDocId}
+        onOpenChange={(open) => { if (!open) setPreviewDocId(null); }}
+        documentId={previewDocId || undefined}
+      />
     </AppLayout>
   );
 };

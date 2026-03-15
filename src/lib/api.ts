@@ -774,6 +774,9 @@ export const documentApi = {
   reindex(docId: string) {
     return request<{ job_id: string; status: string }>("POST", `/api/documents/${docId}/reindex`);
   },
+  batchReindex(documentIds: string[]) {
+    return request<{ submitted: number; total: number }>("POST", "/api/documents/batch-reindex", { document_ids: documentIds });
+  },
   getIngestionStatus(docId: string) {
     return request<{
       document_id: string;
@@ -850,6 +853,49 @@ export const documentApi = {
         token_count: item.token_count,
       })),
     }));
+  },
+  getFullText(docId: string) {
+    return request<{
+      document_id: string;
+      title: string;
+      parser_type: string;
+      version: number;
+      total_chunks: number;
+      content: string;
+    }>("GET", `/api/documents/${docId}/full-text`);
+  },
+  getDownloadUrl(docId: string) {
+    const token = getToken();
+    const params = token ? `?token=${encodeURIComponent(token)}` : "";
+    return `${API_BASE}/api/documents/${docId}/download${params}`;
+  },
+  async download(docId: string) {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/api/documents/${docId}/download`, {
+      headers,
+      credentials: "include",
+    });
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
+    const disposition = res.headers.get("Content-Disposition");
+    let filename = "download";
+    if (disposition) {
+      const starMatch = disposition.match(/filename\*=UTF-8''(.+)/i);
+      if (starMatch) {
+        filename = decodeURIComponent(starMatch[1]);
+      } else {
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        if (match) filename = match[1];
+      }
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   },
 };
 

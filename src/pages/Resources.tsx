@@ -1,20 +1,21 @@
-import { useMemo, useRef, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/AppLayout";
 import {
   FolderOpen, Database, FileText, Plus, Search,
-  ChevronRight, ArrowLeft, Upload, RefreshCw,
-  AlertCircle, Layers, Eye, Loader2, Trash2, Pencil, Users
+  ChevronRight, ChevronDown, ArrowLeft, Upload, RefreshCw,
+  AlertCircle, Layers, Eye, Loader2, Trash2, Pencil, Users, Folder
 } from "lucide-react";
 import { FormDialog, FormField, FormInput, FormTextarea, DialogButton, FormSelect } from "@/components/FormDialog";
 import { useToast } from "@/hooks/use-toast";
 import { EmptyState } from "@/components/UniversalStates";
 import { LoadingSkeleton } from "@/components/UniversalStates";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
+import { BatchUploadDialog } from "@/components/BatchUploadDialog";
 import {
   useWorkspaces, useCreateWorkspace,
   useKnowledgeBases, useKbStats, useCreateKb, useDeleteKb,
-  useDocuments, useUploadDocument, useReindexDocument, useDeleteDocument,
+  useDocuments, useReindexDocument, useDeleteDocument,
   useDocumentVersions, useDocumentChunks,
   useDeleteWorkspace,
   useUpdateWorkspace,
@@ -26,6 +27,7 @@ import {
   useUpsertKbMember,
   useRemoveKbMember,
   useUpdateDocument,
+  useBatchDeleteDocuments,
 } from "@/hooks/useResources";
 import {
   ApiError,
@@ -39,6 +41,60 @@ import {
 } from "@/lib/api";
 
 type View = "workspaces" | "kb-list" | "doc-list" | "doc-detail";
+
+interface FolderNode {
+  name: string;
+  path: string;
+  children: FolderNode[];
+  docs: DocumentData[];
+}
+
+function buildDocTree(docs: DocumentData[]): { rootDocs: DocumentData[]; folders: FolderNode[] } {
+  const rootDocs: DocumentData[] = [];
+  const folderMap = new Map<string, FolderNode>();
+
+  const getOrCreateFolder = (path: string): FolderNode => {
+    if (folderMap.has(path)) return folderMap.get(path)!;
+    const parts = path.split("/");
+    const node: FolderNode = { name: parts[parts.length - 1], path, children: [], docs: [] };
+    folderMap.set(path, node);
+    if (parts.length > 1) {
+      const parent = getOrCreateFolder(parts.slice(0, -1).join("/"));
+      if (!parent.children.find((c) => c.path === path)) parent.children.push(node);
+    }
+    return node;
+  };
+
+  for (const doc of docs) {
+    const uri = doc.source_uri;
+    if (!uri || !uri.includes("/")) {
+      rootDocs.push(doc);
+    } else {
+      const lastSlash = uri.lastIndexOf("/");
+      const dirPath = uri.substring(0, lastSlash);
+      getOrCreateFolder(dirPath).docs.push(doc);
+    }
+  }
+
+  const topFolders: FolderNode[] = [];
+  for (const [path, node] of folderMap) {
+    if (!path.includes("/")) topFolders.push(node);
+  }
+  topFolders.sort((a, b) => a.name.localeCompare(b.name));
+  return { rootDocs, folders: topFolders };
+}
+
+function countFolderDocs(folder: FolderNode): number {
+  let count = folder.docs.length;
+  for (const child of folder.children) count += countFolderDocs(child);
+  return count;
+}
+
+function collectFolderDocs(folder: FolderNode): DocumentData[] {
+  const result: DocumentData[] = [...folder.docs];
+  for (const child of folder.children) result.push(...collectFolderDocs(child));
+  return result;
+}
 
 const Resources = () => {
   const { toast } = useToast();
@@ -54,7 +110,7 @@ const Resources = () => {
   // Dialogs
   const [showCreateWs, setShowCreateWs] = useState(false);
   const [showCreateKb, setShowCreateKb] = useState(false);
-  const [showUploadDoc, setShowUploadDoc] = useState(false);
+  const [showBatchUpload, setShowBatchUpload] = useState(false);
   const [showConfirmReindex, setShowConfirmReindex] = useState<DocumentData | null>(null);
 
   const [editingWsId, setEditingWsId] = useState<string | null>(null);
@@ -78,8 +134,6 @@ const Resources = () => {
   const [kbMemberUserId, setKbMemberUserId] = useState("");
   const [kbMemberRole, setKbMemberRole] = useState("viewer");
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [ingestionJobId, setIngestionJobId] = useState("");
   const [deadLetterReason, setDeadLetterReason] = useState("");
 
@@ -102,7 +156,6 @@ const Resources = () => {
     setFormName("");
     setFormDesc("");
     setFormSlug("");
-    setSelectedFile(null);
   };
 
   // ─── Data hooks ───────────────────────────────────────────────
@@ -154,9 +207,9 @@ const Resources = () => {
   const upsertKbMember = useUpsertKbMember();
   const removeKbMember = useRemoveKbMember();
 
-  const uploadDoc = useUploadDocument();
   const updateDoc = useUpdateDocument();
   const deleteDoc = useDeleteDocument();
+  const batchDeleteDoc = useBatchDeleteDocuments();
   const reindexDoc = useReindexDocument();
   const retryIngestionJobMutation = useMutation({
     mutationFn: (jobId: string) => documentApi.retryIngestionJob(jobId),
@@ -228,12 +281,10 @@ const Resources = () => {
     if (!editingWsId) return;
     try {
       const updated = await updateWs.mutateAsync({
-        id: editingWsId,
-        data: {
-          name: editName,
-          slug: editSlug,
-          description: editDesc || undefined,
-        },
+        workspaceId: editingWsId,
+        name: editName,
+        slug: editSlug,
+        description: editDesc || undefined,
       });
       if (selectedWs?.id === updated.id) {
         setSelectedWs(updated);
@@ -299,24 +350,6 @@ const Resources = () => {
       setEditingKbId(null);
     } catch (e) {
       toast({ title: "更新失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
-    }
-  };
-
-  const handleUploadDoc = async () => {
-    if (!canDocumentWrite) {
-      toastNoPermission("上传文档");
-      return;
-    }
-    if (!selectedKb || !selectedFile) return;
-    try {
-      const result = await uploadDoc.mutateAsync({ kbId: selectedKb.id, file: selectedFile });
-      setIngestionJobId(result.job_id);
-      setDocTab("ingestion");
-      toast({ title: "文档上传成功", description: `入库任务已创建：${result.job_id}` });
-      setShowUploadDoc(false);
-      resetForm();
-    } catch (e) {
-      toast({ title: "上传失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
     }
   };
 
@@ -440,6 +473,26 @@ const Resources = () => {
     }
   };
 
+  const handleDeleteFolder = async (folder: FolderNode) => {
+    if (!canDocumentDelete) {
+      toastNoPermission("删除文件夹");
+      return;
+    }
+    const allDocs = collectFolderDocs(folder);
+    if (allDocs.length === 0) return;
+    if (!confirm(`确认删除文件夹「${folder.name}」及其中 ${allDocs.length} 个文档？`)) return;
+    try {
+      await batchDeleteDoc.mutateAsync(allDocs.map((d) => d.id));
+      if (selectedDoc && allDocs.some((d) => d.id === selectedDoc.id)) {
+        setSelectedDoc(null);
+        setView("doc-list");
+      }
+      toast({ title: `已删除 ${allDocs.length} 个文档` });
+    } catch (e) {
+      toast({ title: "删除失败", description: e instanceof ApiError ? e.message : "未知错误", variant: "destructive" });
+    }
+  };
+
   const handleUpsertWorkspaceMember = async () => {
     if (!canWorkspaceMemberManage) {
       toastNoPermission("管理工作空间成员");
@@ -503,6 +556,15 @@ const Resources = () => {
   // ─── Filtering ────────────────────────────────────────────────
   const filteredKbs = kbs.filter((kb) => kb.name.toLowerCase().includes(search.toLowerCase()));
   const filteredDocs = docs.filter((d) => d.title.toLowerCase().includes(search.toLowerCase()));
+  const docTree = useMemo(() => buildDocTree(filteredDocs), [filteredDocs]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const toggleFolder = useCallback((path: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+  }, []);
 
   // ─── Breadcrumb ───────────────────────────────────────────────
   const breadcrumb = () => {
@@ -752,7 +814,7 @@ const Resources = () => {
                   </button>
                 )}
                 {canDocumentWrite && (
-                  <button onClick={() => setShowUploadDoc(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                  <button onClick={() => setShowBatchUpload(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
                     <Upload className="h-3.5 w-3.5" /> 上传文档
                   </button>
                 )}
@@ -778,45 +840,87 @@ const Resources = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {filteredDocs.map((doc) => (
-                      <tr key={doc.id} className="hover:bg-secondary/30 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); setIngestionJobId(""); setDeadLetterReason(""); }}
-                              className="font-medium text-foreground truncate max-w-[240px] hover:text-primary transition-colors text-left">
-                              {doc.title}
-                            </button>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">{statusBadge(doc.status)}</td>
-                        <td className="px-4 py-3 text-muted-foreground">v{doc.current_version}</td>
-                        <td className="px-4 py-3 text-muted-foreground text-[11px] font-mono">{doc.source_type}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1">
-                            {canDocumentWrite && (
-                              <button onClick={() => openDocEditor(doc)} className="p-1 rounded hover:bg-secondary" title="编辑">
-                                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                    {/* Render folder rows recursively */}
+                    {(() => {
+                      const renderDocRow = (doc: DocumentData, depth: number) => (
+                        <tr key={doc.id} className="hover:bg-secondary/30 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2" style={{ paddingLeft: depth * 20 }}>
+                              <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                              <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); setIngestionJobId(""); setDeadLetterReason(""); }}
+                                className="font-medium text-foreground truncate max-w-[240px] hover:text-primary transition-colors text-left">
+                                {doc.title}
                               </button>
-                            )}
-                            {canDocumentWrite && (doc.status === "failed" || doc.status === "error") && (
-                              <button onClick={() => setShowConfirmReindex(doc)} className="p-1 rounded hover:bg-warning/10" title="重建索引">
-                                <RefreshCw className="h-3.5 w-3.5 text-warning" />
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">{statusBadge(doc.status)}</td>
+                          <td className="px-4 py-3 text-muted-foreground">v{doc.current_version}</td>
+                          <td className="px-4 py-3 text-muted-foreground text-[11px] font-mono">{doc.source_type}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1">
+                              {canDocumentWrite && (
+                                <button onClick={() => openDocEditor(doc)} className="p-1 rounded hover:bg-secondary" title="编辑">
+                                  <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                                </button>
+                              )}
+                              {canDocumentWrite && (doc.status === "failed" || doc.status === "error") && (
+                                <button onClick={() => setShowConfirmReindex(doc)} className="p-1 rounded hover:bg-warning/10" title="重建索引">
+                                  <RefreshCw className="h-3.5 w-3.5 text-warning" />
+                                </button>
+                              )}
+                              <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); setIngestionJobId(""); setDeadLetterReason(""); }}
+                                className="p-1 rounded hover:bg-secondary" title="详情">
+                                <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                               </button>
+                              {canDocumentDelete && (
+                                <button onClick={() => handleDeleteDoc(doc)} className="p-1 rounded hover:bg-destructive/10" title="删除">
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+
+                      const renderFolder = (folder: FolderNode, depth: number): React.ReactNode => {
+                        const expanded = expandedFolders.has(folder.path);
+                        const total = countFolderDocs(folder);
+                        return (
+                          <React.Fragment key={`folder-${folder.path}`}>
+                            <tr className="hover:bg-secondary/30 transition-colors cursor-pointer" onClick={() => toggleFolder(folder.path)}>
+                              <td colSpan={4} className="px-4 py-2.5">
+                                <div className="flex items-center gap-2" style={{ paddingLeft: depth * 20 }}>
+                                  {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
+                                  <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+                                  <span className="font-medium text-foreground">{folder.name}</span>
+                                  <span className="text-xs text-muted-foreground bg-secondary px-1.5 py-0.5 rounded-full">{total}</span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                                {canDocumentDelete && (
+                                  <button onClick={() => handleDeleteFolder(folder)} className="p-1 rounded hover:bg-destructive/10" title="删除文件夹">
+                                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                            {expanded && (
+                              <>
+                                {folder.children.map((child) => renderFolder(child, depth + 1))}
+                                {folder.docs.map((doc) => renderDocRow(doc, depth + 1))}
+                              </>
                             )}
-                            <button onClick={() => { setSelectedDoc(doc); setView("doc-detail"); setDocTab("versions"); setChunkPage(1); setIngestionJobId(""); setDeadLetterReason(""); }}
-                              className="p-1 rounded hover:bg-secondary" title="详情">
-                              <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                            </button>
-                            {canDocumentDelete && (
-                              <button onClick={() => handleDeleteDoc(doc)} className="p-1 rounded hover:bg-destructive/10" title="删除">
-                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </React.Fragment>
+                        );
+                      };
+
+                      return (
+                        <>
+                          {docTree.folders.map((folder) => renderFolder(folder, 0))}
+                          {docTree.rootDocs.map((doc) => renderDocRow(doc, 0))}
+                        </>
+                      );
+                    })()}
                     {filteredDocs.length === 0 && (
                       <tr><td colSpan={5} className="px-4 py-12 text-center">
                         <EmptyState icon={<FileText className="h-8 w-8" />} title="暂无文档" description="点击上方「上传文档」开始" />
@@ -1042,7 +1146,7 @@ const Resources = () => {
           </DialogButton>
         </>}>
         <FormField label="空间名称" required><FormInput value={formName} onChange={setFormName} placeholder="如：产品研发" /></FormField>
-        <FormField label="标识 (slug)" required hint="小写字母、数字和连字符"><FormInput value={formSlug} onChange={setFormSlug} placeholder="如：product-dev" /></FormField>
+        <FormField label="标识 (slug)" required hint="支持中文、字母、数字、下划线和连字符"><FormInput value={formSlug} onChange={setFormSlug} placeholder="如：product-dev 或 智能问答" /></FormField>
         <FormField label="描述"><FormTextarea value={formDesc} onChange={setFormDesc} placeholder="描述此空间的用途..." /></FormField>
       </FormDialog>
 
@@ -1205,33 +1309,13 @@ const Resources = () => {
         </div>
       </FormDialog>
 
-      <FormDialog open={showUploadDoc} onClose={() => { setShowUploadDoc(false); resetForm(); }} title="上传文档"
-        footer={<>
-          <DialogButton onClick={() => { setShowUploadDoc(false); resetForm(); }}>取消</DialogButton>
-          <DialogButton variant="primary" disabled={!canDocumentWrite || !selectedFile || uploadDoc.isPending} onClick={handleUploadDoc}>
-            {uploadDoc.isPending ? "上传中..." : "上传"}
-          </DialogButton>
-        </>}>
-        <FormField label="选择文件" required hint="支持 PDF、Markdown、DOCX 等格式">
-          <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.md,.docx,.txt,.html,.csv"
-            onChange={(e) => { if (e.target.files?.[0]) setSelectedFile(e.target.files[0]); }} />
-          <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/30 transition-colors cursor-pointer"
-            onClick={() => fileInputRef.current?.click()}>
-            <Upload className="h-8 w-8 mx-auto text-muted-foreground/40 mb-2" />
-            {selectedFile ? (
-              <div className="flex items-center justify-center gap-2">
-                <FileText className="h-4 w-4 text-success" />
-                <span className="text-sm text-foreground font-medium">{selectedFile.name}</span>
-              </div>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground">点击选择文件或拖拽至此</p>
-                <p className="text-[11px] text-muted-foreground/60 mt-1">PDF, MD, DOCX, TXT</p>
-              </>
-            )}
-          </div>
-        </FormField>
-      </FormDialog>
+      {selectedKb && (
+        <BatchUploadDialog
+          open={showBatchUpload}
+          onClose={() => setShowBatchUpload(false)}
+          kbId={selectedKb.id}
+        />
+      )}
 
       <FormDialog open={!!editingDocId} onClose={() => setEditingDocId(null)} title="编辑文档"
         footer={<>

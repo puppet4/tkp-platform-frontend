@@ -49,8 +49,8 @@ export function FormInput({
       return "请输入有效的邮箱地址";
     }
 
-    if (pattern === "slug" && val && !/^[a-z0-9-]+$/.test(val)) {
-      return "只能包含小写字母、数字和连字符";
+    if (pattern === "slug" && val && !/^[\w\u4e00-\u9fff\u3400-\u4dbf-]+$/u.test(val)) {
+      return "只能包含中文、字母、数字、下划线和连字符";
     }
 
     return null;

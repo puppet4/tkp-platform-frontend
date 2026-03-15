@@ -113,10 +113,10 @@ export function validateEmail(email: string): string {
 
 export function validateSlug(slug: string): string {
   const trimmed = slug.trim();
-  const slugRegex = /^[a-z0-9-]+$/;
+  const slugRegex = /^[\w\u4e00-\u9fff\u3400-\u4dbf-]+$/u;
 
   if (!slugRegex.test(trimmed)) {
-    throw new Error('标识符只能包含小写字母、数字和连字符');
+    throw new Error('标识符只能包含中文、字母、数字、下划线和连字符');
   }
 
   if (trimmed.startsWith('-') || trimmed.endsWith('-')) {

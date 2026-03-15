@@ -1,17 +1,19 @@
-import { useState, useRef } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { AppLayout } from "@/components/AppLayout";
-import { FileText, Plus, ArrowLeft, Upload, Loader2, Trash2, RefreshCw, Users } from "lucide-react";
+import { FileText, Plus, ArrowLeft, Upload, Loader2, Trash2, RefreshCw, Users, Folder, ChevronRight, ChevronDown, Pencil } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { FormDialog, FormField, FormInput, DialogButton } from "@/components/FormDialog";
 import { toast } from "sonner";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
+import { BatchUploadDialog } from "@/components/BatchUploadDialog";
 import {
   useKnowledgeBases,
   useKbStats,
   useDocuments,
-  useUploadDocument,
   useDeleteDocument,
+  useBatchDeleteDocuments,
   useReindexDocument,
+  useUpdateDocument,
   useKbMembers,
   useUpsertKbMember,
   useRemoveKbMember,
@@ -19,17 +21,71 @@ import {
 import { handleApiError } from "@/lib/error-handler";
 import type { DocumentData, KbMemberData } from "@/lib/api";
 
+interface FolderNode {
+  name: string;
+  path: string;
+  children: FolderNode[];
+  docs: DocumentData[];
+}
+
+function buildDocTree(docs: DocumentData[]): { rootDocs: DocumentData[]; folders: FolderNode[] } {
+  const rootDocs: DocumentData[] = [];
+  const folderMap = new Map<string, FolderNode>();
+
+  const getOrCreateFolder = (path: string): FolderNode => {
+    if (folderMap.has(path)) return folderMap.get(path)!;
+    const parts = path.split("/");
+    const node: FolderNode = { name: parts[parts.length - 1], path, children: [], docs: [] };
+    folderMap.set(path, node);
+    if (parts.length > 1) {
+      const parent = getOrCreateFolder(parts.slice(0, -1).join("/"));
+      if (!parent.children.find((c) => c.path === path)) parent.children.push(node);
+    }
+    return node;
+  };
+
+  for (const doc of docs) {
+    const uri = doc.source_uri;
+    if (!uri || !uri.includes("/")) {
+      rootDocs.push(doc);
+    } else {
+      const lastSlash = uri.lastIndexOf("/");
+      const dirPath = uri.substring(0, lastSlash);
+      getOrCreateFolder(dirPath).docs.push(doc);
+    }
+  }
+
+  const topFolders: FolderNode[] = [];
+  for (const [path] of folderMap) {
+    if (!path.includes("/")) topFolders.push(folderMap.get(path)!);
+  }
+  topFolders.sort((a, b) => a.name.localeCompare(b.name));
+  return { rootDocs, folders: topFolders };
+}
+
+function countFolderDocs(folder: FolderNode): number {
+  let count = folder.docs.length;
+  for (const child of folder.children) count += countFolderDocs(child);
+  return count;
+}
+
+function collectFolderDocs(folder: FolderNode): DocumentData[] {
+  const result: DocumentData[] = [...folder.docs];
+  for (const child of folder.children) result.push(...collectFolderDocs(child));
+  return result;
+}
+
 const KnowledgeBaseDetail = () => {
   const { kbId } = useParams<{ kbId: string }>();
   const navigate = useNavigate();
   const { canAction } = useRoleAccess();
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [showUpload, setShowUpload] = useState(false);
+  const [showBatchUpload, setShowBatchUpload] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [memberUserId, setMemberUserId] = useState("");
   const [memberRole, setMemberRole] = useState("viewer");
+  const [renamingDoc, setRenamingDoc] = useState<DocumentData | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
 
   const canDocumentWrite = canAction("api.document.write");
   const canDocumentDelete = canAction("api.document.delete");
@@ -40,6 +96,15 @@ const KnowledgeBaseDetail = () => {
   const { data: stats } = useKbStats(kbId || "");
   const { data: documents = [], isLoading: docsLoading } = useDocuments(kbId || "");
   const { data: members = [] } = useKbMembers(kbId || "", { enabled: showMembers && !!kbId });
+  const docTree = useMemo(() => buildDocTree(documents), [documents]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const toggleFolder = useCallback((path: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+  }, []);
 
   // Handle KB not found
   if (!docsLoading && kbId && !kb) {
@@ -60,27 +125,12 @@ const KnowledgeBaseDetail = () => {
     );
   }
 
-  const uploadMut = useUploadDocument();
   const deleteMut = useDeleteDocument();
+  const batchDeleteMut = useBatchDeleteDocuments();
   const reindexMut = useReindexDocument();
+  const updateDocMut = useUpdateDocument();
   const upsertMemberMut = useUpsertKbMember();
   const removeMemberMut = useRemoveKbMember();
-
-  const handleUpload = () => {
-    if (!selectedFile || !kbId) return;
-
-    uploadMut.mutate(
-      { kbId, file: selectedFile },
-      {
-        onSuccess: () => {
-          toast.success("文档上传成功");
-          setShowUpload(false);
-          setSelectedFile(null);
-        },
-        onError: (error) => toast.error(handleApiError(error)),
-      }
-    );
-  };
 
   const handleDelete = (doc: DocumentData) => {
     if (!confirm(`确定要删除文档"${doc.title}"吗？`)) return;
@@ -88,6 +138,30 @@ const KnowledgeBaseDetail = () => {
       onSuccess: () => toast.success("文档已删除"),
       onError: (error) => toast.error(handleApiError(error)),
     });
+  };
+
+  const handleDeleteFolder = (folder: FolderNode) => {
+    const allDocs = collectFolderDocs(folder);
+    if (allDocs.length === 0) return;
+    if (!confirm(`确定要删除文件夹"${folder.name}"及其中 ${allDocs.length} 个文档吗？`)) return;
+    batchDeleteMut.mutate(allDocs.map((d) => d.id), {
+      onSuccess: () => toast.success(`已删除 ${allDocs.length} 个文档`),
+      onError: (error) => toast.error(handleApiError(error)),
+    });
+  };
+
+  const handleRename = () => {
+    if (!renamingDoc || !renameTitle.trim()) return;
+    updateDocMut.mutate(
+      { docId: renamingDoc.id, data: { title: renameTitle.trim() } },
+      {
+        onSuccess: () => {
+          toast.success("文档已重命名");
+          setRenamingDoc(null);
+        },
+        onError: (error) => toast.error(handleApiError(error)),
+      }
+    );
   };
 
   const handleReindex = (doc: DocumentData) => {
@@ -172,7 +246,7 @@ const KnowledgeBaseDetail = () => {
             )}
             {canDocumentWrite && (
               <button
-                onClick={() => setShowUpload(true)}
+                onClick={() => setShowBatchUpload(true)}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 flex items-center gap-2"
               >
                 <Upload className="w-4 h-4" />
@@ -220,87 +294,143 @@ const KnowledgeBaseDetail = () => {
               </div>
             ) : (
               <div className="space-y-2">
-                {documents.map((doc: DocumentData) => (
-                  <div
-                    key={doc.id}
-                    className="flex items-center justify-between p-4 border rounded-md hover:bg-muted/50 cursor-pointer"
-                    onClick={() => navigate(`/documents/${doc.id}`)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-5 h-5 text-muted-foreground" />
-                      <div>
-                        <div className="font-medium">{doc.title}</div>
-                        <div className="text-sm text-muted-foreground">
-                          {doc.source_type} • 版本 {doc.current_version}
+                {(() => {
+                  const renderDocCard = (doc: DocumentData, depth: number) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between p-4 border rounded-md hover:bg-muted/50 cursor-pointer"
+                      style={{ marginLeft: depth * 20 }}
+                      onClick={() => navigate(`/documents/${doc.id}`)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-5 h-5 text-muted-foreground" />
+                        <div>
+                          <div className="font-medium">{doc.title}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {doc.source_type} • 版本 {doc.current_version}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                      <span
-                        className={`px-2 py-1 text-xs rounded ${
-                          doc.status === "ready"
-                            ? "bg-green-100 text-green-800"
-                            : doc.status === "processing"
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {doc.status === "ready" ? "就绪" : doc.status === "processing" ? "处理中" : "失败"}
-                      </span>
-                      {canDocumentWrite && (
-                        <button
-                          onClick={() => handleReindex(doc)}
-                          className="p-2 hover:bg-muted rounded-md"
-                          title="重新索引"
+                      <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        <span
+                          className={`px-2 py-1 text-xs rounded ${
+                            doc.status === "ready"
+                              ? "bg-green-100 text-green-800"
+                              : doc.status === "processing"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-red-100 text-red-800"
+                          }`}
                         >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
-                      )}
-                      {canDocumentDelete && (
-                        <button
-                          onClick={() => handleDelete(doc)}
-                          className="p-2 hover:bg-destructive/10 text-destructive rounded-md"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                          {doc.status === "ready" ? "就绪" : doc.status === "processing" ? "处理中" : "失败"}
+                        </span>
+                        {canDocumentWrite && (
+                          <button
+                            onClick={() => { setRenamingDoc(doc); setRenameTitle(doc.title); }}
+                            className="p-2 hover:bg-muted rounded-md"
+                            title="重命名"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                        )}
+                        {canDocumentWrite && (
+                          <button
+                            onClick={() => handleReindex(doc)}
+                            className="p-2 hover:bg-muted rounded-md"
+                            title="重新索引"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                        )}
+                        {canDocumentDelete && (
+                          <button
+                            onClick={() => handleDelete(doc)}
+                            className="p-2 hover:bg-destructive/10 text-destructive rounded-md"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+
+                  const renderFolder = (folder: FolderNode, depth: number): React.ReactNode => {
+                    const expanded = expandedFolders.has(folder.path);
+                    const total = countFolderDocs(folder);
+                    return (
+                      <React.Fragment key={`folder-${folder.path}`}>
+                        <div
+                          className="flex items-center justify-between p-4 border rounded-md hover:bg-muted/50 cursor-pointer"
+                          style={{ marginLeft: depth * 20 }}
+                          onClick={() => toggleFolder(folder.path)}
+                        >
+                          <div className="flex items-center gap-3">
+                            {expanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                            <Folder className="w-5 h-5 text-amber-500" />
+                            <span className="font-medium">{folder.name}</span>
+                            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{total}</span>
+                          </div>
+                          {canDocumentDelete && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder); }}
+                              className="p-2 hover:bg-destructive/10 text-destructive rounded-md"
+                              title="删除文件夹"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                        {expanded && (
+                          <>
+                            {folder.children.map((child) => renderFolder(child, depth + 1))}
+                            {folder.docs.map((doc) => renderDocCard(doc, depth + 1))}
+                          </>
+                        )}
+                      </React.Fragment>
+                    );
+                  };
+
+                  return (
+                    <>
+                      {docTree.folders.map((folder) => renderFolder(folder, 0))}
+                      {docTree.rootDocs.map((doc) => renderDocCard(doc, 0))}
+                    </>
+                  );
+                })()}
               </div>
             )}
           </div>
         </div>
 
-        {/* Upload Dialog */}
+        {/* Batch Upload Dialog */}
+        {kbId && (
+          <BatchUploadDialog
+            open={showBatchUpload}
+            onClose={() => setShowBatchUpload(false)}
+            kbId={kbId}
+          />
+        )}
+
+        {/* Rename Dialog */}
         <FormDialog
-          open={showUpload}
-          onOpenChange={setShowUpload}
-          title="上传文档"
-          description="选择要上传到知识库的文档文件"
+          open={!!renamingDoc}
+          onOpenChange={(open) => { if (!open) setRenamingDoc(null); }}
+          title="重命名文档"
+          description={`修改文档"${renamingDoc?.title}"的名称`}
         >
           <div className="space-y-4">
-            <div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                className="hidden"
+            <FormField label="新名称">
+              <FormInput
+                value={renameTitle}
+                onChange={setRenameTitle}
+                placeholder="输入新文档名称"
               />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full px-4 py-2 border rounded-md hover:bg-muted flex items-center justify-center gap-2"
-              >
-                <Upload className="w-4 h-4" />
-                {selectedFile ? selectedFile.name : "选择文件"}
-              </button>
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <DialogButton onClick={() => setRenamingDoc(null)}>取消</DialogButton>
+              <DialogButton onClick={handleRename} disabled={!renameTitle.trim() || updateDocMut.isPending}>
+                {updateDocMut.isPending ? "保存中..." : "保存"}
+              </DialogButton>
             </div>
-            <DialogButton
-              onClick={handleUpload}
-              disabled={!selectedFile || uploadMut.isPending}
-            >
-              {uploadMut.isPending ? "上传中..." : "上传"}
-            </DialogButton>
           </div>
         </FormDialog>
 

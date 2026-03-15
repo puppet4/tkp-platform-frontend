@@ -3,6 +3,7 @@ import {
   workspaceApi,
   kbApi,
   documentApi,
+  importBatchApi,
 } from "@/lib/api";
 
 // ─── Workspaces ──────────────────────────────────────────────────
@@ -170,12 +171,16 @@ export function useRemoveKbMember() {
 
 // ─── Documents ───────────────────────────────────────────────────
 export function useDocuments(kbId: string, options?: { enabled?: boolean }) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ["documents", kbId],
-    queryFn: () => documentApi.list(kbId),
+    queryFn: async () => {
+      const docs = await documentApi.list(kbId);
+      qc.invalidateQueries({ queryKey: ["kb-stats", kbId] });
+      return docs;
+    },
     enabled: options?.enabled !== false && !!kbId,
     refetchInterval: (query) => {
-      // 如果有文档处于 pending 或 processing 状态，每 3 秒轮询一次
       const docs = query.state.data as any[];
       if (docs?.some((doc: any) => doc.status === "pending" || doc.status === "processing")) {
         return 3000;
@@ -200,6 +205,17 @@ export function useDeleteDocument() {
     onSuccess: (_, docId) => {
       qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["document", docId] });
+      qc.invalidateQueries({ queryKey: ["kb-stats"] });
+    },
+  });
+}
+
+export function useBatchDeleteDocuments() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (docIds: string[]) => documentApi.batchDelete(docIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["kb-stats"] });
     },
   });
@@ -264,3 +280,26 @@ export const useCreateKb = useCreateKnowledgeBase;
 export const useUpdateKb = useUpdateKnowledgeBase;
 export const useDeleteKb = useDeleteKnowledgeBase;
 export const useKbStats = useKnowledgeBaseStats;
+
+// ─── Import Batches ─────────────────────────────────────────────
+export function useImportBatch(batchId: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ["import-batch", batchId],
+    queryFn: () => importBatchApi.get(batchId!),
+    enabled: options?.enabled !== false && !!batchId,
+    refetchInterval: (query) => {
+      const data = query.state.data as { status?: string } | undefined;
+      const terminal = ["completed", "partial_failure", "cancelled"];
+      if (data?.status && terminal.includes(data.status)) return false;
+      return 3000;
+    },
+  });
+}
+
+export function useImportBatches(kbId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ["import-batches", kbId],
+    queryFn: () => importBatchApi.list(kbId),
+    enabled: options?.enabled !== false && !!kbId,
+  });
+}

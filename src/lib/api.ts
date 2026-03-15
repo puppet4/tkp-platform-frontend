@@ -768,6 +768,9 @@ export const documentApi = {
   delete(docId: string) {
     return request<DocumentData>("DELETE", `/api/documents/${docId}`);
   },
+  batchDelete(documentIds: string[]) {
+    return request<{ deleted: number }>("POST", "/api/documents/batch-delete", { document_ids: documentIds });
+  },
   reindex(docId: string) {
     return request<{ job_id: string; status: string }>("POST", `/api/documents/${docId}/reindex`);
   },
@@ -847,6 +850,159 @@ export const documentApi = {
         token_count: item.token_count,
       })),
     }));
+  },
+};
+
+// ─── Upload with progress (XHR-based) ────────────────────────────
+function uploadRequestWithProgress<T>(
+  path: string,
+  formData: FormData,
+  onProgress?: (loaded: number, total: number) => void,
+  abortSignal?: AbortSignal,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}${path}`);
+
+    const token = getToken();
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+
+    xhr.withCredentials = true;
+    xhr.timeout = UPLOAD_TIMEOUT;
+
+    if (onProgress) {
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      });
+    }
+
+    const cleanup = () => {
+      if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+    };
+
+    const onAbort = () => {
+      xhr.abort();
+      cleanup();
+      reject(new ApiError(408, { message: "上传已取消" }));
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        reject(new ApiError(408, { message: "上传已取消" }));
+        return;
+      }
+      abortSignal.addEventListener("abort", onAbort);
+    }
+
+    xhr.onload = () => {
+      cleanup();
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const json = JSON.parse(xhr.responseText);
+          if (json && typeof json === "object" && "data" in json) {
+            resolve((json as ApiResponse<T>).data);
+          } else {
+            resolve(json as T);
+          }
+        } catch {
+          resolve(null as T);
+        }
+      } else {
+        try {
+          const errBody = JSON.parse(xhr.responseText);
+          reject(new ApiError(xhr.status, errBody));
+        } catch {
+          reject(new ApiError(xhr.status, {}));
+        }
+      }
+    };
+
+    xhr.onerror = () => {
+      cleanup();
+      reject(new ApiError(0, { message: "网络错误" }));
+    };
+
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new ApiError(408, { message: "上传超时" }));
+    };
+
+    xhr.send(formData);
+  });
+}
+
+// ─── Import Batch types ──────────────────────────────────────────
+export interface ImportBatchFileData {
+  document_id: string;
+  title: string;
+  status: string;
+  job_id?: string | null;
+  job_status?: string | null;
+  job_stage?: string | null;
+  job_progress?: number | null;
+  error?: string | null;
+}
+
+export interface ImportBatchData {
+  id: string;
+  kb_id: string;
+  label?: string | null;
+  total_files: number;
+  uploaded_files: number;
+  failed_uploads: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImportBatchDetailData extends ImportBatchData {
+  files: ImportBatchFileData[];
+}
+
+export interface BatchUploadFileResult {
+  document_id: string;
+  document_version_id?: string;
+  version?: number;
+  job_id?: string;
+  duplicate: boolean;
+  title: string;
+}
+
+// ─── Import Batch API ────────────────────────────────────────────
+export const importBatchApi = {
+  create(kbId: string, data: { total_files: number; label?: string }) {
+    return request<ImportBatchData>("POST", `/api/knowledge-bases/${kbId}/import-batches`, data);
+  },
+  uploadFile(
+    batchId: string,
+    formData: FormData,
+    onProgress?: (loaded: number, total: number) => void,
+    abortSignal?: AbortSignal,
+  ) {
+    return uploadRequestWithProgress<BatchUploadFileResult>(
+      `/api/import-batches/${batchId}/files`,
+      formData,
+      onProgress,
+      abortSignal,
+    );
+  },
+  finalize(batchId: string) {
+    return request<ImportBatchData>("POST", `/api/import-batches/${batchId}/finalize`);
+  },
+  get(batchId: string) {
+    return request<ImportBatchDetailData>("GET", `/api/import-batches/${batchId}`);
+  },
+  list(kbId: string, params?: { limit?: number; offset?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString();
+    return request<ImportBatchData[]>("GET", `/api/knowledge-bases/${kbId}/import-batches${query ? `?${query}` : ""}`);
+  },
+  cancel(batchId: string) {
+    return request<ImportBatchData>("POST", `/api/import-batches/${batchId}/cancel`);
   },
 };
 

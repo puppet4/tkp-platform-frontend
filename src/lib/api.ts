@@ -1098,14 +1098,6 @@ export interface ConversationMessageData {
   created_at: string;
 }
 
-export interface ChatCompletionResult {
-  message_id: string;
-  answer: string;
-  citations: Array<Record<string, unknown>>;
-  usage: Record<string, number>;
-  conversation_id: string;
-}
-
 type ConversationKbScope =
   | string[]
   | {
@@ -1222,13 +1214,6 @@ export const chatApi = {
         created_at: item.created_at,
       })),
     );
-  },
-  completions(data: {
-    conversation_id?: string | null;
-    messages: Array<{ role: string; content: string }>;
-    kb_ids?: string[];
-  }) {
-    return request<ChatCompletionResult>("POST", "/api/chat/completions", data);
   },
   async completionsStream(
     data: {

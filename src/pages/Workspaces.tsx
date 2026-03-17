@@ -58,7 +58,7 @@ const Workspaces = () => {
   const handleUpdate = () => {
     if (!editingWs || !formName.trim()) return;
     updateMut.mutate(
-      { workspaceId: editingWs.workspace_id, name: formName, description: formDesc, slug: formSlug || undefined },
+      { workspaceId: editingWs.id, name: formName, description: formDesc, slug: formSlug || undefined },
       {
         onSuccess: () => {
           toast.success("工作空间已更新");
@@ -74,7 +74,7 @@ const Workspaces = () => {
 
   const handleDelete = async (ws: WorkspaceData) => {
     if (!await confirm({ title: "删除工作空间", message: `确定要删除工作空间"${ws.name}"吗？`, confirmLabel: "删除" })) return;
-    deleteMut.mutate(ws.workspace_id, {
+    deleteMut.mutate(ws.id, {
       onSuccess: () => toast.success("工作空间已删除"),
       onError: (error) => toast.error(handleApiError(error)),
     });
@@ -131,9 +131,9 @@ const Workspaces = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredWorkspaces.map((ws: WorkspaceData) => (
               <div
-                key={ws.workspace_id}
+                key={ws.id}
                 className="p-6 bg-card border rounded-lg hover:border-primary hover:shadow-md transition-all cursor-pointer"
-                onClick={() => navigate(`/workspaces/${ws.workspace_id}`)}
+                onClick={() => navigate(`/workspaces/${ws.id}`)}
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="p-3 bg-primary/10 rounded-lg">

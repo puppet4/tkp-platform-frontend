@@ -41,7 +41,7 @@ const WorkspaceDetail = () => {
   const canMemberManage = canAction("api.workspace.member.manage");
 
   const { data: workspaces = [] } = useWorkspaces();
-  const workspace = workspaces.find((ws: any) => ws.workspace_id === workspaceId);
+  const workspace = workspaces.find((ws: any) => ws.id === workspaceId);
   const { data: kbs = [], isLoading: kbsLoading } = useKnowledgeBases(workspaceId);
   const { data: members = [] } = useWorkspaceMembers(workspaceId || "", { enabled: showMembers && !!workspaceId });
 

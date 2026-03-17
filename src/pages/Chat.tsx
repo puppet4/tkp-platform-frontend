@@ -7,7 +7,6 @@ import {
   type ConversationData,
   type ConversationMessageData,
   type KnowledgeBaseData,
-  type ChatCompletionResult,
 } from "@/lib/api";
 import {
   MessageSquare,

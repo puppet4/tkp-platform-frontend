@@ -85,7 +85,7 @@ const Index = () => {
     queryFn: async () => {
       const top = knowledgeBases.slice(0, 5);
       const stats = await Promise.all(
-        top.map(async (kb) => ({ kb, stats: await kbApi.stats(kb.id).catch(() => null) })),
+        top.map(async (kb) => ({ kb, stats: await kbApi.getStats(kb.id).catch(() => null) })),
       );
       return stats.map(({ kb, stats }) => ({
         id: kb.id,

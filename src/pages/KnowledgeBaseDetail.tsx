@@ -492,7 +492,7 @@ const KnowledgeBaseDetail = () => {
               <FormField label="用户 ID">
                 <FormInput
                   value={memberUserId}
-                  onChange={(e) => setMemberUserId(e.target.value)}
+                  onChange={setMemberUserId}
                   placeholder="输入用户 ID"
                 />
               </FormField>

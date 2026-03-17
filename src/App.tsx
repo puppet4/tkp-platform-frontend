@@ -22,7 +22,6 @@ const GovernancePermissions = lazy(() => import("./pages/governance/Permissions"
 const GovernanceRetention = lazy(() => import("./pages/governance/Retention"));
 const GovernancePII = lazy(() => import("./pages/governance/PII"));
 const GovernanceDeletion = lazy(() => import("./pages/governance/Deletion"));
-const OpsCenter = lazy(() => import("./pages/OpsCenter"));
 const OpsCenterNav = lazy(() => import("./pages/OpsCenterNav"));
 const OpsOverview = lazy(() => import("./pages/ops/Overview"));
 const OpsMonitoring = lazy(() => import("./pages/ops/Monitoring"));

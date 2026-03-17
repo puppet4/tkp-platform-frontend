@@ -27,10 +27,11 @@ const Deletion = () => {
   const canReviewDeletion = hasPermission("api.governance.deletion.request.review");
   const canExecuteDeletion = hasPermission("api.governance.deletion.execute");
 
-  const { data: deletionRequests = [], isLoading: reqLoading } = useQuery({
+  const { data: deletionData, isLoading: reqLoading } = useQuery({
     queryKey: ["deletion-requests"],
     queryFn: () => governanceApi.listDeletionRequests(),
   });
+  const deletionRequests = deletionData?.requests ?? [];
 
   const createReqMut = useMutation({
     mutationFn: (data: { resource_type: string; resource_id: string; reason: string }) =>
@@ -292,7 +293,7 @@ const Deletion = () => {
           <FormField label="资源类型">
             <FormSelect
               value={formTargetType}
-              onChange={(e) => setFormTargetType(e.target.value)}
+              onChange={setFormTargetType}
             >
               <option value="document">文档</option>
               <option value="conversation">对话</option>
@@ -302,14 +303,14 @@ const Deletion = () => {
           <FormField label="资源 ID">
             <FormInput
               value={formTarget}
-              onChange={(e) => setFormTarget(e.target.value)}
+              onChange={setFormTarget}
               placeholder="输入资源 ID"
             />
           </FormField>
           <FormField label="删除原因">
             <FormTextarea
               value={formReason}
-              onChange={(e) => setFormReason(e.target.value)}
+              onChange={setFormReason}
               placeholder="说明删除原因..."
               rows={3}
             />
@@ -348,7 +349,7 @@ const Deletion = () => {
             <FormField label="拒绝原因">
               <FormTextarea
                 value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
+                onChange={setRejectReason}
                 placeholder="说明拒绝原因..."
                 rows={3}
               />
@@ -419,13 +420,13 @@ const Deletion = () => {
               <div>
                 <span className="font-medium">数据哈希：</span>
                 <div className="font-mono text-xs break-all bg-muted p-2 rounded mt-1">
-                  {proofData.data_hash}
+                  {proofData.details?.data_hash}
                 </div>
               </div>
               <div>
                 <span className="font-medium">证明哈希：</span>
                 <div className="font-mono text-xs break-all bg-muted p-2 rounded mt-1">
-                  {proofData.proof_hash}
+                  {proofData.details?.proof_hash}
                 </div>
               </div>
             </div>

@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 
 interface FormDialogProps {
   open: boolean;
-  onClose: () => void;
+  onClose?: () => void;
+  onOpenChange?: (open: boolean) => void;
   title: string;
   description?: string;
   children: ReactNode;
@@ -12,7 +13,11 @@ interface FormDialogProps {
   width?: string;
 }
 
-export function FormDialog({ open, onClose, title, description, children, footer, width = "max-w-md" }: FormDialogProps) {
+export function FormDialog({ open, onClose, onOpenChange, title, description, children, footer, width = "max-w-md" }: FormDialogProps) {
+  const handleClose = () => {
+    onClose?.();
+    onOpenChange?.(false);
+  };
   useEffect(() => {
     if (open) {
       document.body.style.overflow = "hidden";
@@ -32,7 +37,7 @@ export function FormDialog({ open, onClose, title, description, children, footer
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             className="fixed inset-0 bg-foreground/15 backdrop-blur-sm"
-            onClick={onClose}
+            onClick={handleClose}
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.96, y: 8 }}
@@ -46,7 +51,7 @@ export function FormDialog({ open, onClose, title, description, children, footer
                 <h3 className="text-base font-semibold text-foreground truncate">{title}</h3>
                 {description && <p className="text-[12px] text-muted-foreground mt-0.5 truncate">{description}</p>}
               </div>
-              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary/80 transition-all duration-150 shrink-0 ml-2">
+              <button onClick={handleClose} className="p-1.5 rounded-lg hover:bg-secondary/80 transition-all duration-150 shrink-0 ml-2">
                 <X className="h-4 w-4 text-muted-foreground" />
               </button>
             </div>
@@ -106,8 +111,8 @@ export function FormTextarea({ value, onChange, placeholder, rows = 3 }: {
   );
 }
 
-export function FormSelect({ value, onChange, options }: {
-  value: string; onChange: (v: string) => void; options: { value: string; label: string }[];
+export function FormSelect({ value, onChange, options, children }: {
+  value: string; onChange: (v: string) => void; options?: { value: string; label: string }[]; children?: ReactNode;
 }) {
   return (
     <select
@@ -115,7 +120,7 @@ export function FormSelect({ value, onChange, options }: {
       onChange={e => onChange(e.target.value)}
       className="w-full h-10 rounded-xl border border-input bg-card px-3.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all duration-200"
     >
-      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      {options ? options.map(o => <option key={o.value} value={o.value}>{o.label}</option>) : children}
     </select>
   );
 }

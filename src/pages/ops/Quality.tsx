@@ -217,14 +217,14 @@ const Quality = () => {
           <FormField label="评测名称" required>
             <FormInput
               value={formName}
-              onChange={(e) => setFormName(e.target.value)}
+              onChange={setFormName}
               placeholder="输入评测名称"
             />
           </FormField>
           <FormField label="测试查询" required>
             <FormTextarea
               value={formQuery}
-              onChange={(e) => setFormQuery(e.target.value)}
+              onChange={setFormQuery}
               placeholder="输入测试查询问题"
               rows={3}
             />
@@ -232,7 +232,7 @@ const Quality = () => {
           <FormField label="期望答案">
             <FormTextarea
               value={formExpected}
-              onChange={(e) => setFormExpected(e.target.value)}
+              onChange={setFormExpected}
               placeholder="输入期望的答案（可选）"
               rows={3}
             />
@@ -240,7 +240,7 @@ const Quality = () => {
           <FormField label="知识库 ID" required>
             <FormInput
               value={formKbId}
-              onChange={(e) => setFormKbId(e.target.value)}
+              onChange={setFormKbId}
               placeholder="输入知识库 ID"
             />
           </FormField>

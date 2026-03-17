@@ -327,20 +327,20 @@ const Releases = () => {
           <FormField label="版本号" required>
             <FormInput
               value={formVersion}
-              onChange={(e) => setFormVersion(e.target.value)}
+              onChange={setFormVersion}
               placeholder="例如: v1.2.3"
             />
           </FormField>
           <FormField label="描述" required>
             <FormTextarea
               value={formDesc}
-              onChange={(e) => setFormDesc(e.target.value)}
+              onChange={setFormDesc}
               placeholder="描述此版本的更新内容"
               rows={3}
             />
           </FormField>
           <FormField label="发布策略">
-            <FormSelect value={formStrategy} onChange={(e) => setFormStrategy(e.target.value)}>
+            <FormSelect value={formStrategy} onChange={setFormStrategy}>
               <option value="blue_green">蓝绿部署</option>
               <option value="canary">金丝雀发布</option>
               <option value="rolling">滚动更新</option>
@@ -350,7 +350,7 @@ const Releases = () => {
             <FormInput
               type="number"
               value={formPercentage}
-              onChange={(e) => setFormPercentage(e.target.value)}
+              onChange={setFormPercentage}
               placeholder="100"
               min="0"
               max="100"
@@ -371,14 +371,14 @@ const Releases = () => {
           <FormField label="名称" required>
             <FormInput
               value={webhookName}
-              onChange={(e) => setWebhookName(e.target.value)}
+              onChange={setWebhookName}
               placeholder="输入 Webhook 名称"
             />
           </FormField>
           <FormField label="URL" required>
             <FormInput
               value={webhookUrl}
-              onChange={(e) => setWebhookUrl(e.target.value)}
+              onChange={setWebhookUrl}
               placeholder="https://example.com/webhook"
             />
           </FormField>
@@ -412,14 +412,14 @@ const Releases = () => {
           <FormField label="名称" required>
             <FormInput
               value={webhookName}
-              onChange={(e) => setWebhookName(e.target.value)}
+              onChange={setWebhookName}
               placeholder="输入 Webhook 名称"
             />
           </FormField>
           <FormField label="URL" required>
             <FormInput
               value={webhookUrl}
-              onChange={(e) => setWebhookUrl(e.target.value)}
+              onChange={setWebhookUrl}
               placeholder="https://example.com/webhook"
             />
           </FormField>

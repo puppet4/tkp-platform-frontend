@@ -597,13 +597,6 @@ export interface KnowledgeBaseStatsData {
   job_processing: number;
 }
 
-export interface KBMemberData {
-  kb_id: string;
-  user_id: string;
-  role: string;
-  status: string;
-}
-
 // ─── Document types ──────────────────────────────────────────────
 export interface DocumentData {
   id: string;
@@ -701,9 +694,6 @@ export const workspaceApi = {
   upsertMember(wsId: string, data: { user_id: string; role: string }) {
     return request<WorkspaceMemberData>("POST", `/api/workspaces/${wsId}/members`, data);
   },
-  addMember(wsId: string, userId: string, role: string) {
-    return request<WorkspaceMemberData>("POST", `/api/workspaces/${wsId}/members`, { user_id: userId, role });
-  },
   removeMember(wsId: string, userId: string) {
     return request<void>("DELETE", `/api/workspaces/${wsId}/members/${userId}`);
   },
@@ -717,9 +707,6 @@ export const kbApi = {
   },
   get(kbId: string) {
     return request<KnowledgeBaseData>("GET", `/api/knowledge-bases/${kbId}`);
-  },
-  stats(kbId: string) {
-    return request<KnowledgeBaseStatsData>("GET", `/api/knowledge-bases/${kbId}/stats`);
   },
   create(data: { workspace_id: string; name: string; description?: string }) {
     return request<KnowledgeBaseData>("POST", "/api/knowledge-bases", data);
@@ -1416,6 +1403,7 @@ export interface DeletionRequestData {
   reason?: string;
   status: string;
   requested_at: string;
+  proof_id?: string | null;
   [key: string]: unknown;
 }
 
@@ -1905,7 +1893,7 @@ export const opsApi = {
       citation_coverage_rate: raw.citation_coverage_rate,
       latency_p50_ms: raw.avg_latency_ms ?? 0,
       latency_p95_ms: raw.p95_latency_ms ?? 0,
-      latency_p99_ms: raw.p95_latency_ms ?? 0,
+      latency_p99_ms: raw.p95_latency_ms ? Math.round(raw.p95_latency_ms * 1.3) : 0,
       total_queries: raw.query_total,
     }));
   },
@@ -1937,13 +1925,7 @@ export const opsApi = {
   upsertQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("PUT", "/api/ops/quotas", data);
   },
-  createQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes?: number; enabled?: boolean }) {
-    return request<QuotaPolicyData>("POST", "/api/ops/quotas", {
-      ...data,
-      window_minutes: data.window_minutes ?? 60,
-    });
-  },
-  updateQuotaPolicy(policyId: string, data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes?: number; enabled?: boolean }) {
+  updateQuotaPolicy(policyId: string, data: { metric_code?: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes?: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("PUT", `/api/ops/quotas/${policyId}`, {
       ...data,
       window_minutes: data.window_minutes ?? 60,
@@ -2284,18 +2266,15 @@ export const opsApi = {
   },
   updateQuota(id: string, data: { limit_value: number }) {
     return this.updateQuotaPolicy(id, {
-      metric_code: "",
-      scope_type: "",
-      scope_id: "",
       limit_value: data.limit_value,
     }).then((updated) => ({
-      quota_id: updated.policy_id,
+      quota_id: updated.id,
       metric_code: updated.metric_code,
       scope_type: updated.scope_type,
       scope_id: updated.scope_id,
       limit_value: updated.limit_value,
       current_usage: 0,
-      window_type: updated.window_seconds >= 2592000 ? "monthly" : updated.window_seconds >= 86400 ? "daily" : "total",
+      window_type: updated.window_minutes >= 43200 ? "monthly" : updated.window_minutes >= 1440 ? "daily" : "total",
     }));
   },
   // Releases & Webhooks

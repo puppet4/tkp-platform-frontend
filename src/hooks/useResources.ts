@@ -174,11 +174,7 @@ export function useDocuments(kbId: string, options?: { enabled?: boolean }) {
   const qc = useQueryClient();
   return useQuery({
     queryKey: ["documents", kbId],
-    queryFn: async () => {
-      const docs = await documentApi.list(kbId);
-      qc.invalidateQueries({ queryKey: ["kb-stats", kbId] });
-      return docs;
-    },
+    queryFn: () => documentApi.list(kbId),
     enabled: options?.enabled !== false && !!kbId,
     refetchInterval: (query) => {
       const docs = query.state.data as any[];
@@ -186,6 +182,10 @@ export function useDocuments(kbId: string, options?: { enabled?: boolean }) {
         return 3000;
       }
       return false;
+    },
+    select: (docs) => {
+      qc.invalidateQueries({ queryKey: ["kb-stats", kbId] });
+      return docs;
     },
   });
 }

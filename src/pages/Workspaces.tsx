@@ -185,14 +185,14 @@ const Workspaces = () => {
         <FormField label="名称" required>
           <FormInput
             value={formName}
-            onChange={(e) => setFormName(e.target.value)}
+            onChange={setFormName}
             placeholder="输入工作空间名称"
           />
         </FormField>
         <FormField label="描述">
           <FormTextarea
             value={formDesc}
-            onChange={(e) => setFormDesc(e.target.value)}
+            onChange={setFormDesc}
             placeholder="输入工作空间描述"
             rows={3}
           />
@@ -200,7 +200,7 @@ const Workspaces = () => {
         <FormField label="Slug">
           <FormInput
             value={formSlug}
-            onChange={(e) => setFormSlug(e.target.value)}
+            onChange={setFormSlug}
             placeholder="输入唯一标识符（可选）"
           />
         </FormField>
@@ -219,14 +219,14 @@ const Workspaces = () => {
         <FormField label="名称" required>
           <FormInput
             value={formName}
-            onChange={(e) => setFormName(e.target.value)}
+            onChange={setFormName}
             placeholder="输入工作空间名称"
           />
         </FormField>
         <FormField label="描述">
           <FormTextarea
             value={formDesc}
-            onChange={(e) => setFormDesc(e.target.value)}
+            onChange={setFormDesc}
             placeholder="输入工作空间描述"
             rows={3}
           />
@@ -234,7 +234,7 @@ const Workspaces = () => {
         <FormField label="Slug">
           <FormInput
             value={formSlug}
-            onChange={(e) => setFormSlug(e.target.value)}
+            onChange={setFormSlug}
             placeholder="输入唯一标识符"
           />
         </FormField>

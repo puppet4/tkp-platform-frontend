@@ -236,20 +236,20 @@ const Incidents = () => {
           <FormField label="标题" required>
             <FormInput
               value={formTitle}
-              onChange={(e) => setFormTitle(e.target.value)}
+              onChange={setFormTitle}
               placeholder="输入事件标题"
             />
           </FormField>
           <FormField label="描述" required>
             <FormTextarea
               value={formDesc}
-              onChange={(e) => setFormDesc(e.target.value)}
+              onChange={setFormDesc}
               placeholder="详细描述事件情况"
               rows={4}
             />
           </FormField>
           <FormField label="严重程度">
-            <FormSelect value={formSeverity} onChange={(e) => setFormSeverity(e.target.value)}>
+            <FormSelect value={formSeverity} onChange={setFormSeverity}>
               <option value="low">低</option>
               <option value="medium">中</option>
               <option value="high">高</option>
@@ -271,20 +271,20 @@ const Incidents = () => {
           <FormField label="标题" required>
             <FormInput
               value={formTitle}
-              onChange={(e) => setFormTitle(e.target.value)}
+              onChange={setFormTitle}
               placeholder="输入事件标题"
             />
           </FormField>
           <FormField label="描述">
             <FormTextarea
               value={formDesc}
-              onChange={(e) => setFormDesc(e.target.value)}
+              onChange={setFormDesc}
               placeholder="详细描述事件情况"
               rows={4}
             />
           </FormField>
           <FormField label="状态">
-            <FormSelect value={formStatus} onChange={(e) => setFormStatus(e.target.value)}>
+            <FormSelect value={formStatus} onChange={setFormStatus}>
               <option value="open">待处理</option>
               <option value="in_progress">处理中</option>
               <option value="resolved">已解决</option>
@@ -292,7 +292,7 @@ const Incidents = () => {
             </FormSelect>
           </FormField>
           <FormField label="严重程度">
-            <FormSelect value={formSeverity} onChange={(e) => setFormSeverity(e.target.value)}>
+            <FormSelect value={formSeverity} onChange={setFormSeverity}>
               <option value="low">低</option>
               <option value="medium">中</option>
               <option value="high">高</option>

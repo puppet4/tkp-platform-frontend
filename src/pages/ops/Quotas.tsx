@@ -222,7 +222,7 @@ const Quotas = () => {
           description="为租户或工作空间设置配额限制"
         >
           <FormField label="指标类型" required>
-            <FormSelect value={formMetric} onChange={(e) => setFormMetric(e.target.value)}>
+            <FormSelect value={formMetric} onChange={setFormMetric}>
               <option value="chat_tokens">对话 Token</option>
               <option value="documents">文档数量</option>
               <option value="storage_bytes">存储空间</option>
@@ -230,7 +230,7 @@ const Quotas = () => {
             </FormSelect>
           </FormField>
           <FormField label="范围类型" required>
-            <FormSelect value={formScope} onChange={(e) => setFormScope(e.target.value)}>
+            <FormSelect value={formScope} onChange={setFormScope}>
               <option value="tenant">租户</option>
               <option value="workspace">工作空间</option>
             </FormSelect>
@@ -238,7 +238,7 @@ const Quotas = () => {
           <FormField label="范围 ID" required>
             <FormInput
               value={formScopeId}
-              onChange={(e) => setFormScopeId(e.target.value)}
+              onChange={setFormScopeId}
               placeholder="输入租户或工作空间 ID"
             />
           </FormField>
@@ -246,12 +246,12 @@ const Quotas = () => {
             <FormInput
               type="number"
               value={formLimit}
-              onChange={(e) => setFormLimit(e.target.value)}
+              onChange={setFormLimit}
               placeholder="输入限额值"
             />
           </FormField>
           <FormField label="时间窗口" required>
-            <FormSelect value={formWindow} onChange={(e) => setFormWindow(e.target.value)}>
+            <FormSelect value={formWindow} onChange={setFormWindow}>
               <option value="daily">每日</option>
               <option value="monthly">每月</option>
               <option value="total">总量</option>
@@ -273,7 +273,7 @@ const Quotas = () => {
             <FormInput
               type="number"
               value={formLimit}
-              onChange={(e) => setFormLimit(e.target.value)}
+              onChange={setFormLimit}
               placeholder="输入限额值"
             />
           </FormField>

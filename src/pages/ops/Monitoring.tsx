@@ -11,7 +11,7 @@ const Monitoring = () => {
   const qc = useQueryClient();
   const { roleName } = useRoleAccess();
   const [filterStatus, setFilterStatus] = useState<string>("all");
-  const supportsAlertMutations = false;
+  const supportsAlertMutations = true;
 
   const canOpsManage = roleName === "owner" || roleName === "admin";
 

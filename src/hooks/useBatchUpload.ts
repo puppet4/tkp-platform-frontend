@@ -122,10 +122,11 @@ export function useBatchUpload(kbId: string) {
       let idx = 0;
 
       const runNext = async (): Promise<void> => {
-        while (idx < pending.length) {
+        while (true) {
           if (cancelledRef.current) return;
-          const current = pending[idx++];
-          await uploadSingleFile(current, batch.id, controller.signal);
+          const currentIdx = idx++;
+          if (currentIdx >= pending.length) return;
+          await uploadSingleFile(pending[currentIdx], batch.id, controller.signal);
         }
       };
 
@@ -169,10 +170,11 @@ export function useBatchUpload(kbId: string) {
 
     let idx = 0;
     const runNext = async (): Promise<void> => {
-      while (idx < failedFiles.length) {
+      while (true) {
         if (cancelledRef.current) return;
-        const current = failedFiles[idx++];
-        await uploadSingleFile(current, batchId, controller.signal);
+        const currentIdx = idx++;
+        if (currentIdx >= failedFiles.length) return;
+        await uploadSingleFile(failedFiles[currentIdx], batchId, controller.signal);
       }
     };
 

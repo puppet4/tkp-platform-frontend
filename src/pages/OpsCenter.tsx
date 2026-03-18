@@ -817,7 +817,7 @@ const OpsCenter = () => {
                   { label: "总查询数", value: String(quality.total_queries) },
                   { label: "零命中率", value: `${(quality.zero_hit_rate * 100).toFixed(1)}%`, warn: quality.zero_hit_rate > 0.3 },
                   { label: "引用覆盖率", value: `${(quality.citation_coverage_rate * 100).toFixed(1)}%` },
-                  { label: "P50 延迟", value: `${quality.latency_p50_ms}ms` },
+                  { label: "平均延迟", value: `${quality.avg_latency_ms}ms` },
                   { label: "P95 延迟", value: `${quality.latency_p95_ms}ms` },
                   { label: "P99 延迟", value: `${quality.latency_p99_ms}ms`, warn: quality.latency_p99_ms > 500 },
                 ].map((m) => (

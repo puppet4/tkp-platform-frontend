@@ -69,33 +69,12 @@ export class ApiError extends Error {
   }
 }
 
-// Request queue for handling concurrent requests during token refresh
-let isRefreshingToken = false;
-let refreshQueue: Array<() => void> = [];
-
-function waitForTokenRefresh(): Promise<void> {
-  return new Promise((resolve) => {
-    refreshQueue.push(resolve);
-  });
-}
-
-function notifyTokenRefreshed() {
-  refreshQueue.forEach((resolve) => resolve());
-  refreshQueue = [];
-  isRefreshingToken = false;
-}
-
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
   auth = true,
 ): Promise<T> {
-  // Wait if token is being refreshed
-  if (isRefreshingToken && auth) {
-    await waitForTokenRefresh();
-  }
-
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
   // Add Authorization header if token exists and auth is required
@@ -124,11 +103,8 @@ async function request<T>(
       const errBody = await res.json().catch(() => ({}));
 
       // Handle 401 Unauthorized - token might be expired
-      if (res.status === 401 && auth && !isRefreshingToken) {
-        // Clear invalid token
+      if (res.status === 401 && auth) {
         clearToken();
-        // Notify queue that refresh failed
-        notifyTokenRefreshed();
       }
 
       throw new ApiError(res.status, errBody);
@@ -1242,20 +1218,24 @@ export const chatApi = {
 
     if (!reader) throw new Error("No response body");
 
+    let buffer = "";
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const chunk = decoder.decode(value);
-      const lines = chunk.split("\n");
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
 
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const json = JSON.parse(line.slice(6));
-            onChunk(json);
-          } catch (e) {
-            console.error("Failed to parse SSE:", e);
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try {
+              const json = JSON.parse(line.slice(6));
+              onChunk(json);
+            } catch (e) {
+              console.error("Failed to parse SSE:", e);
+            }
           }
         }
       }
@@ -1428,7 +1408,7 @@ export const governanceApi = {
     return request<{ requests: DeletionRequestData[] }>("GET", `/api/governance/deletion/requests${q ? `?${q}` : ""}`);
   },
   createDeletionRequest(resourceType: string, resourceId: string, reason: string) {
-    return request<DeletionRequestData>(
+    return request<{ request_id: string; status: string; requested_at: string }>(
       "POST",
       "/api/governance/deletion/requests",
       {
@@ -1439,20 +1419,20 @@ export const governanceApi = {
     );
   },
   approveDeletion(requestId: string) {
-    return request<DeletionRequestData>("POST", `/api/governance/deletion/requests/${requestId}/approve`);
+    return request<{ status: string }>("POST", `/api/governance/deletion/requests/${requestId}/approve`);
   },
   rejectDeletion(requestId: string, reason: string) {
-    return request<DeletionRequestData>(
+    return request<{ status: string }>(
       "POST",
       `/api/governance/deletion/requests/${requestId}/reject`,
       { reason },
     );
   },
   cancelDeletion(requestId: string) {
-    return request<DeletionRequestData>("POST", `/api/governance/deletion/requests/${requestId}/cancel`);
+    return request<{ status: string }>("POST", `/api/governance/deletion/requests/${requestId}/cancel`);
   },
   executeDeletion(requestId: string) {
-    return request<DeletionRequestData>("POST", `/api/governance/deletion/requests/${requestId}/execute`);
+    return request<{ proof_id: string; deleted_at: string; proof_hash: string }>("POST", `/api/governance/deletion/requests/${requestId}/execute`);
   },
   getDeletionProof(proofId: string) {
     return request<{
@@ -1643,7 +1623,7 @@ export interface RetrievalQualityData {
   window_hours: number;
   zero_hit_rate: number;
   citation_coverage_rate: number;
-  latency_p50_ms: number;
+  avg_latency_ms: number;
   latency_p95_ms: number;
   latency_p99_ms: number;
   total_queries: number;
@@ -1876,7 +1856,7 @@ export const opsApi = {
       window_hours: raw.window_hours,
       zero_hit_rate: raw.zero_hit_rate,
       citation_coverage_rate: raw.citation_coverage_rate,
-      latency_p50_ms: raw.avg_latency_ms ?? 0,
+      avg_latency_ms: raw.avg_latency_ms ?? 0,
       latency_p95_ms: raw.p95_latency_ms ?? 0,
       latency_p99_ms: raw.p95_latency_ms ? Math.round(raw.p95_latency_ms * 1.3) : 0,
       total_queries: raw.query_total,
@@ -2093,7 +2073,7 @@ export const opsApi = {
       critical_alerts: overview.incident_critical_open_total ?? 0,
       ingestion_jobs: ingestion?.backlog_total ?? 0,
       processing_jobs: ingestion?.processing ?? 0,
-      avg_response_time: retrieval?.latency_p50_ms ?? ingestion?.avg_latency_ms_last_window ?? 0,
+      avg_response_time: retrieval?.avg_latency_ms ?? ingestion?.avg_latency_ms_last_window ?? 0,
       p95_response_time: retrieval?.latency_p95_ms ?? ingestion?.p95_latency_ms_last_window ?? 0,
       cpu_usage: 0,
       memory_usage: 0,

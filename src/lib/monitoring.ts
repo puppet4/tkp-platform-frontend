@@ -2,7 +2,6 @@
  * 前端错误监控和性能追踪
  */
 import * as Sentry from "@sentry/react";
-import { BrowserTracing } from "@sentry/tracing";
 
 interface MonitoringConfig {
   dsn?: string;
@@ -22,8 +21,8 @@ export function initMonitoring(config: MonitoringConfig) {
     dsn: config.dsn,
     environment: config.environment,
     integrations: [
-      new BrowserTracing(),
-      new Sentry.Replay({
+      Sentry.browserTracingIntegration(),
+      Sentry.replayIntegration({
         maskAllText: true,
         blockAllMedia: true,
       }),

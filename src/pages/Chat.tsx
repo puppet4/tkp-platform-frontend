@@ -199,9 +199,10 @@ const Chat = () => {
   });
 
   // ─── Send message ──────────────────────────────────────────────
-  const handleSend = async (e?: React.FormEvent) => {
+  const handleSend = async (e?: React.FormEvent, overrideContent?: string) => {
     e?.preventDefault();
-    if (!input.trim() || isStreaming) return;
+    const userContent = (overrideContent ?? input).trim();
+    if (!userContent || isStreaming) return;
 
     // Must have a selected conversation
     if (!selectedConvId) {
@@ -209,7 +210,6 @@ const Chat = () => {
       return;
     }
 
-    const userContent = input.trim();
     const streamingMsgId = `streaming-${Date.now()}`;
 
     setInput("");
@@ -319,9 +319,8 @@ const Chat = () => {
     // Remove messages from this point
     setMessages(messages.slice(0, msgIndex));
 
-    // Resend
-    setInput(userMsg.content);
-    setTimeout(() => handleSend(), 100);
+    // Resend directly with the content, bypassing input state
+    handleSend(undefined, userMsg.content);
   };
 
   // ─── New conversation ──────────────────────────────────────────
@@ -331,7 +330,7 @@ const Chat = () => {
   };
 
   // ─── Conversation list component ──────────────────────────────
-  const ConversationList = () => (
+  const conversationListContent = (
     <>
       <div className="p-3 border-b border-border flex items-center justify-between">
         <h2 className="text-sm font-semibold text-foreground">对话</h2>
@@ -410,7 +409,7 @@ const Chat = () => {
       <div className="flex h-[calc(100vh-3.25rem)]">
         {/* Desktop conversation list */}
         <div className="w-72 border-r border-border bg-card flex-col shrink-0 hidden md:flex">
-          <ConversationList />
+          {conversationListContent}
         </div>
 
         {/* Mobile conversation drawer */}
@@ -421,7 +420,7 @@ const Chat = () => {
               onClick={() => setShowMobileList(false)}
             />
             <div className="fixed left-0 top-0 bottom-0 z-50 w-72 bg-card border-r border-border flex flex-col md:hidden animate-in slide-in-from-left duration-200">
-              <ConversationList />
+              {conversationListContent}
             </div>
           </>
         )}

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   workspaceApi,
@@ -173,6 +173,7 @@ export function useRemoveKbMember() {
 // ─── Documents ───────────────────────────────────────────────────
 export function useDocuments(kbId: string, options?: { enabled?: boolean }) {
   const qc = useQueryClient();
+  const prevLengthRef = useRef<number | undefined>(undefined);
   const query = useQuery({
     queryKey: ["documents", kbId],
     queryFn: () => documentApi.list(kbId),
@@ -185,12 +186,14 @@ export function useDocuments(kbId: string, options?: { enabled?: boolean }) {
       return false;
     },
   });
-  const dataUpdatedAt = query.dataUpdatedAt;
+  const data = query.data as any[] | undefined;
+  const currentLength = data?.length;
   useEffect(() => {
-    if (dataUpdatedAt > 0) {
+    if (currentLength !== undefined && currentLength !== prevLengthRef.current) {
+      prevLengthRef.current = currentLength;
       qc.invalidateQueries({ queryKey: ["kb-stats", kbId] });
     }
-  }, [dataUpdatedAt, kbId, qc]);
+  }, [currentLength, kbId, qc]);
   return query;
 }
 

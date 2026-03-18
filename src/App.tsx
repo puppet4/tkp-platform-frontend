@@ -35,7 +35,14 @@ const TenantAdmin = lazy(() => import("./pages/TenantAdmin"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Forbidden = lazy(() => import("./pages/Forbidden"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      retry: 1,
+    },
+  },
+});
 
 function PageFallback() {
   return <div className="min-h-screen flex items-center justify-center text-muted-foreground">页面加载中…</div>;

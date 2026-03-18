@@ -200,7 +200,10 @@ const TenantAdmin = () => {
   });
 
   const removeUserMutation = useMutation({
-    mutationFn: (userId: string) => usersApi.remove(userId),
+    mutationFn: (userId: string) => {
+      if (!selectedTenantId) throw new Error("no tenant selected");
+      return tenantApi.removeMember(selectedTenantId, userId);
+    },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["tenant-admin-members", selectedTenantId] });
       toast.success("成员已移除");

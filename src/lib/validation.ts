@@ -53,8 +53,13 @@ export function validateResourceType(resourceType?: string): string | undefined 
 
 export function sanitizeString(value?: string): string | undefined {
   if (!value) return undefined;
-  // Remove potential XSS characters
-  return value.replace(/[<>'"&]/g, '');
+  // Encode HTML special characters instead of removing them
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
 }
 
 /**

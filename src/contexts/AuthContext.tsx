@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from "react";
 import {
   authApi,
   permissionsApi,
@@ -198,7 +198,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchIdentity();
   };
 
-  const currentTenant = tenants.find((t) => t.id === currentTenantId) || null;
+  const currentTenant = useMemo(
+    () => tenants.find((t) => t.id === currentTenantId) || null,
+    [tenants, currentTenantId],
+  );
 
   return (
     <AuthContext.Provider

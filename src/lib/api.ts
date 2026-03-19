@@ -1140,13 +1140,13 @@ export const chatApi = {
     return request<{
       conversation_id: string;
       title: string;
-      created_at?: string;
+      created_at: string;
       updated_at: string;
     }>("PATCH", `/api/chat/conversations/${id}`, { title }).then((item) => ({
       id: item.conversation_id,
       title: item.title,
       message_count: 0,
-      created_at: item.created_at || item.updated_at, // 后端暂未返回 created_at，使用 updated_at 作为 fallback
+      created_at: item.created_at,
       updated_at: item.updated_at,
     }));
   },
@@ -1291,7 +1291,7 @@ export interface FeedbackItemData {
   message_id?: string | null;
   retrieval_log_id?: string | null;
   processed: boolean;
-  user_name?: string;
+  user_id?: string;
   created_at: string;
 }
 
@@ -1313,6 +1313,7 @@ export const feedbackApi = {
     return request<{
       feedbacks: Array<{
         feedback_id: string;
+        user_id: string;
         feedback_type: string;
         feedback_value?: string | null;
         comment?: string | null;
@@ -1334,6 +1335,7 @@ export const feedbackApi = {
         message_id: item.message_id,
         retrieval_log_id: item.retrieval_log_id,
         processed: item.processed,
+        user_id: item.user_id,
         created_at: item.created_at,
       })),
     );
@@ -1625,7 +1627,7 @@ export interface RetrievalQualityData {
   citation_coverage_rate: number;
   avg_latency_ms: number;
   latency_p95_ms: number;
-  latency_p99_ms: number;
+  latency_p99_ms_est: number;
   total_queries: number;
   [key: string]: unknown;
 }
@@ -1858,7 +1860,7 @@ export const opsApi = {
       citation_coverage_rate: raw.citation_coverage_rate,
       avg_latency_ms: raw.avg_latency_ms ?? 0,
       latency_p95_ms: raw.p95_latency_ms ?? 0,
-      latency_p99_ms: raw.p95_latency_ms ? Math.round(raw.p95_latency_ms * 1.3) : 0,
+      latency_p99_ms_est: raw.p95_latency_ms ? Math.round(raw.p95_latency_ms * 1.3) : 0,
       total_queries: raw.query_total,
     }));
   },
@@ -1890,10 +1892,14 @@ export const opsApi = {
   upsertQuotaPolicy(data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("PUT", "/api/ops/quotas", data);
   },
-  updateQuotaPolicy(policyId: string, data: { metric_code?: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes?: number; enabled?: boolean }) {
+  updateQuotaPolicy(policyId: string, data: { metric_code: string; scope_type?: string; scope_id?: string; limit_value: number; window_minutes?: number; enabled?: boolean }) {
     return request<QuotaPolicyData>("PUT", `/api/ops/quotas/${policyId}`, {
-      ...data,
-      window_minutes: data.window_minutes ?? 60,
+      metric_code: data.metric_code,
+      scope_type: data.scope_type ?? "tenant",
+      scope_id: data.scope_id,
+      limit_value: data.limit_value,
+      window_minutes: data.window_minutes ?? 1440,
+      enabled: data.enabled ?? true,
     });
   },
   listQuotaPolicies() {

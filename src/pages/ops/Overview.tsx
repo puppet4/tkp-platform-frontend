@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
-import { Activity, TrendingUp, AlertTriangle, CheckCircle, Clock, Database } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle, Clock, Database } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { opsApi } from "@/lib/api";
 import { useRoleAccess } from "@/hooks/useRoleAccess";
@@ -14,6 +14,18 @@ const Overview = () => {
   const { data: metrics, isLoading } = useQuery({
     queryKey: ["ops-metrics", timeRange],
     queryFn: () => opsApi.getMetrics(timeRange),
+    enabled: canOpsManage,
+  });
+
+  const { data: ingestion } = useQuery({
+    queryKey: ["ops-ingestion-metrics", timeRange],
+    queryFn: () => opsApi.ingestionMetrics(timeRange),
+    enabled: canOpsManage,
+  });
+
+  const { data: quality } = useQuery({
+    queryKey: ["ops-quality", timeRange],
+    queryFn: () => opsApi.retrievalQuality(timeRange),
     enabled: canOpsManage,
   });
 
@@ -48,7 +60,6 @@ const Overview = () => {
             <option value={1}>最近 1 小时</option>
             <option value={24}>最近 24 小时</option>
             <option value={168}>最近 7 天</option>
-            <option value={720}>最近 30 天</option>
           </select>
         </div>
 
@@ -130,57 +141,44 @@ const Overview = () => {
           </div>
 
           <div className="bg-card border rounded-lg p-6">
-            <h2 className="text-lg font-semibold mb-4">资源使用情况</h2>
+            <h2 className="text-lg font-semibold mb-4">入库与检索指标</h2>
             <div className="space-y-4">
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm">CPU 使用率</span>
-                  <span className="text-sm font-medium">{metrics?.cpu_usage || 0}%</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm">积压任务</span>
+                  <span className="text-sm font-medium">{ingestion?.backlog_total ?? 0}</span>
                 </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div
-                    className="bg-blue-600 h-2 rounded-full"
-                    style={{ width: `${metrics?.cpu_usage || 0}%` }}
-                  ></div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm">失败率（窗口内）</span>
+                  <span className="text-sm font-medium">
+                    {ingestion ? `${(ingestion.failure_rate_last_window * 100).toFixed(1)}%` : "--"}
+                  </span>
                 </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm">内存使用率</span>
-                  <span className="text-sm font-medium">{metrics?.memory_usage || 0}%</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm">P95 入库耗时</span>
+                  <span className="text-sm font-medium">
+                    {ingestion?.p95_latency_ms_last_window != null
+                      ? `${ingestion.p95_latency_ms_last_window}ms`
+                      : "--"}
+                  </span>
                 </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div
-                    className="bg-green-600 h-2 rounded-full"
-                    style={{ width: `${metrics?.memory_usage || 0}%` }}
-                  ></div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm">检索零命中率</span>
+                  <span className="text-sm font-medium">
+                    {quality ? `${(quality.zero_hit_rate * 100).toFixed(1)}%` : "--"}
+                  </span>
                 </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm">磁盘使用率</span>
-                  <span className="text-sm font-medium">{metrics?.disk_usage || 0}%</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm">引用覆盖率</span>
+                  <span className="text-sm font-medium">
+                    {quality ? `${(quality.citation_coverage_rate * 100).toFixed(1)}%` : "--"}
+                  </span>
                 </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div
-                    className="bg-purple-600 h-2 rounded-full"
-                    style={{ width: `${metrics?.disk_usage || 0}%` }}
-                  ></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm">网络带宽</span>
-                  <span className="text-sm font-medium">{metrics?.network_usage || 0}%</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div
-                    className="bg-orange-600 h-2 rounded-full"
-                    style={{ width: `${metrics?.network_usage || 0}%` }}
-                  ></div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">P95 检索延迟</span>
+                  <span className="text-sm font-medium">
+                    {quality?.latency_p95_ms != null ? `${quality.latency_p95_ms}ms` : "--"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -191,16 +189,8 @@ const Overview = () => {
         <div className="bg-card border rounded-lg p-6">
           <h2 className="text-lg font-semibold mb-4">最近活动</h2>
           <div className="space-y-2">
-            {metrics?.recent_activities?.length > 0 ? (
-              metrics.recent_activities.map((activity: any, index: number) => (
-                <div key={index} className="flex items-center gap-3 p-3 border rounded-md">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                  <div className="flex-1">
-                    <div className="text-sm">{activity.message}</div>
-                    <div className="text-xs text-muted-foreground">{activity.timestamp}</div>
-                  </div>
-                </div>
-              ))
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">加载中...</div>
             ) : (
               <div className="text-center py-8 text-muted-foreground">
                 暂无最近活动
